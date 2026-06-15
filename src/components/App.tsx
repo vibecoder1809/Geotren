@@ -9,6 +9,7 @@ import { Sidebar } from './Sidebar'
 import { DetailPanel } from './DetailPanel'
 import { StopPanel } from './StopPanel'
 import { MobileLayout } from './MobileLayout'
+import { useInterpolatedTrains } from '@/lib/interpolate'
 
 const MapView = dynamic(() => import('./MapView'), { ssr: false })
 
@@ -45,9 +46,11 @@ export function App() {
     [routes],
   )
 
+  const interpolatedTrains = useInterpolatedTrains(trains, routes, stops)
+
   const filteredTrains = useMemo(
-    () => activeLines.has('ALL') ? trains : trains.filter(t => activeLines.has(t.line)),
-    [trains, activeLines],
+    () => activeLines.has('ALL') ? interpolatedTrains : interpolatedTrains.filter(t => activeLines.has(t.line)),
+    [interpolatedTrains, activeLines],
   )
 
   const fetchTrains = useCallback(async (showLoader = false) => {
