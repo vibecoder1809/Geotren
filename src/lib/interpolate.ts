@@ -105,11 +105,17 @@ interface TrainState {
   direction:  1 | -1
   lat:        number
   lng:        number
+  // Distances (m along polyline) of upcoming stops the train should pause at,
+  // and the set already serviced this leg so we don't dwell twice.
+  stopDists:  number[]
+  servicedStops: Set<number>
 }
 
 // Typical FGC inter-city speed in m/s (~80 km/h for mainline, ~60 for urban)
-const SPEED_MS = 10.5 // ~38 km/h — FGC average commercial speed
-const DWELL_MS = 30_000 // 30 s station dwell
+const SPEED_MS = 19 // ~68 km/h — closer to FGC peak running speed
+const DWELL_MS = 20_000 // 20 s station dwell
+// How close (m) the animated train must get to a stop to trigger a dwell
+const STOP_TRIGGER_M = 60
 // If the real API position is >500 m from where we think the train is, hard-snap it
 const SNAP_THRESHOLD_M = 500
 
@@ -118,6 +124,18 @@ function findStopDist(stopName: string, stops: Stop[], pl: Polyline): number | n
   const stop = stops.find(s => s.name === stopName)
   if (!stop) return null
   return projectOntoPolyline([stop.lng, stop.lat], pl)
+}
+
+// Distances along the polyline (sorted) of every stop this train still has to
+// serve — its upcoming stops plus the final destination.
+function upcomingStopDists(train: Train, stops: Stop[], pl: Polyline): number[] {
+  const names = [...train.upcomingStops, train.destination]
+  const dists: number[] = []
+  for (const name of names) {
+    const d = findStopDist(name, stops, pl)
+    if (d != null) dists.push(d)
+  }
+  return dists.sort((a, b) => a - b)
 }
 
 // Determine which direction along the polyline the train is heading.
@@ -193,6 +211,8 @@ export function useInterpolatedTrains(
           direction: dir,
           lat: train.lat,
           lng: train.lng,
+          stopDists: upcomingStopDists(train, stops, pl),
+          servicedStops: new Set(),
         })
       } else {
         // Update polyline if route data changed
@@ -208,6 +228,11 @@ export function useInterpolatedTrains(
 
         // Update direction from fresh upcoming-stops data
         existing.direction = resolveDirection(existing.distAlong, train, stops, pl)
+
+        // Refresh the upcoming-stop distances from the new snapshot, and forget
+        // serviced stops that are no longer upcoming.
+        existing.stopDists = upcomingStopDists(train, stops, pl)
+        existing.servicedStops.clear()
 
         // If newly at a station, start dwell
         if (train.currentStop && existing.dwellUntil < now) {
@@ -240,6 +265,32 @@ export function useInterpolatedTrains(
         // Clamp to polyline ends
         const clamped = Math.max(0, Math.min(next, state.polyline.totalLen))
         if (clamped === state.distAlong) continue
+
+        // Pause at any station we just reached/passed this frame that we
+        // haven't already serviced — mimics the real station dwell.
+        const lo = Math.min(state.distAlong, clamped)
+        const hi = Math.max(state.distAlong, clamped)
+        let dwellHit: number | null = null
+        for (const sd of state.stopDists) {
+          if (state.servicedStops.has(sd)) continue
+          // crossed it, or ended this frame within trigger range of it
+          if ((sd >= lo - STOP_TRIGGER_M && sd <= hi + STOP_TRIGGER_M)) {
+            if (dwellHit == null || Math.abs(sd - state.distAlong) < Math.abs(dwellHit - state.distAlong)) {
+              dwellHit = sd
+            }
+          }
+        }
+        if (dwellHit != null) {
+          // Snap to the stop, mark serviced, and dwell.
+          state.distAlong = dwellHit
+          state.servicedStops.add(dwellHit)
+          state.dwellUntil = now + DWELL_MS
+          const [lng, lat] = positionAtDistance(state.polyline, dwellHit)
+          state.lat = lat
+          state.lng = lng
+          anyMoved = true
+          continue
+        }
 
         state.distAlong = clamped
         const [lng, lat] = positionAtDistance(state.polyline, clamped)
