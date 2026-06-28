@@ -85,5 +85,10 @@ export async function fgcFeed(dataset: string) {
   const buffer = new Uint8Array(await pbRes.arrayBuffer())
 
   const { transit_realtime } = await import('gtfs-realtime-bindings')
-  return transit_realtime.FeedMessage.decode(buffer)
+  const message = transit_realtime.FeedMessage.decode(buffer)
+  // int64 fields (e.g. stopTimeUpdate arrival/departure `time`) decode as
+  // protobufjs Long objects, which break arithmetic (`time * 1000` → NaN).
+  // Re-materialise as a plain object with longs coerced to JS numbers; GTFS-RT
+  // timestamps are epoch seconds and fit safely within MAX_SAFE_INTEGER.
+  return transit_realtime.FeedMessage.toObject(message, { longs: Number }) as typeof message
 }

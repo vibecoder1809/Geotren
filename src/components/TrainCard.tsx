@@ -26,8 +26,9 @@ export function TrainCard({ train, selected, onClick, lineColors }: TrainCardPro
   const delayed = train.delayMinutes > 0
   const nextStop = train.upcomingStops[0]
   const etaLabel = (etaUnix: number | undefined): string | null => {
-    if (etaUnix == null) return null
+    if (etaUnix == null || !Number.isFinite(etaUnix)) return null
     const mins = Math.round((etaUnix * 1000 - Date.now()) / 60000)
+    if (!Number.isFinite(mins)) return null
     if (mins <= 0) return t('etaNow')
     return t('etaIn', mins)
   }
