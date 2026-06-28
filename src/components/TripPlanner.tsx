@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import type { PlannerStation, Journey } from '@/types'
 import { LINE_COLORS } from '@/lib/constants'
+import { useI18n } from '@/lib/i18n'
 
 interface TripPlannerProps {
   lineColors: Record<string, string>
@@ -87,6 +88,7 @@ function LinePill({ line, lineColors }: { line: string; lineColors: Record<strin
 }
 
 function JourneyCard({ journey, lineColors, best }: { journey: Journey; lineColors: Record<string, string>; best: boolean }) {
+  const { t } = useI18n()
   const delayed = journey.liveDelayMin && journey.liveDelayMin > 0
   return (
     <div style={{ border: `1px solid ${best ? 'var(--accent)' : 'var(--border)'}`, background: best ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.06)', borderRadius: 10, padding: 12, marginBottom: 8 }}>
@@ -103,7 +105,7 @@ function JourneyCard({ journey, lineColors, best }: { journey: Journey; lineColo
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{journey.durationMin} min</div>
           <div style={{ fontSize: 10, color: 'var(--muted)' }}>
-            {journey.transfers === 0 ? 'Directe' : `${journey.transfers} transbord${journey.transfers > 1 ? 'aments' : 'ament'}`}
+            {journey.transfers === 0 ? t('direct') : t('transfers', journey.transfers)}
           </div>
         </div>
       </div>
@@ -120,7 +122,7 @@ function JourneyCard({ journey, lineColors, best }: { journey: Journey; lineColo
 
       {delayed && (
         <div style={{ marginTop: 8, fontSize: 11, color: 'var(--red)', fontWeight: 600 }}>
-          ⚠ {journey.legs[0].line} circula amb +{journey.liveDelayMin} min de retard ara mateix
+          ⚠ {t('delayLive', journey.legs[0].line, journey.liveDelayMin!)}
         </div>
       )}
     </div>
@@ -128,6 +130,7 @@ function JourneyCard({ journey, lineColors, best }: { journey: Journey; lineColo
 }
 
 export function TripPlanner({ lineColors }: TripPlannerProps) {
+  const { t } = useI18n()
   const [stations, setStations] = useState<PlannerStation[]>([])
   const [origin, setOrigin]     = useState<PlannerStation | null>(null)
   const [dest, setDest]         = useState<PlannerStation | null>(null)
@@ -144,19 +147,19 @@ export function TripPlanner({ lineColors }: TripPlannerProps) {
 
   const search = useCallback(async () => {
     if (!origin || !dest) return
-    if (origin.code === dest.code) { setError("L'origen i la destinació són iguals"); return }
+    if (origin.code === dest.code) { setError(t('sameOriginDest')); return }
     setLoading(true); setError(null); setJourneys(null)
     try {
       const res = await fetch(`/api/plan?from=${encodeURIComponent(origin.code)}&to=${encodeURIComponent(dest.code)}`)
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? 'Error'); return }
+      if (!res.ok) { setError(data.error ?? t('genericError')); return }
       setJourneys(data.journeys ?? [])
     } catch {
-      setError('No es pot connectar')
+      setError(t('cannotConnect'))
     } finally {
       setLoading(false)
     }
-  }, [origin, dest])
+  }, [origin, dest, t])
 
   // Auto-search when both ends are picked.
   useEffect(() => {
@@ -168,25 +171,25 @@ export function TripPlanner({ lineColors }: TripPlannerProps) {
   return (
     <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: 16, borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <StationInput label="Origen" value={origin} onChange={setOrigin} stations={stations} placeholder="D'on surts?" />
+        <StationInput label={t('origin')} value={origin} onChange={setOrigin} stations={stations} placeholder={t('fromWhere')} />
         <div style={{ display: 'flex', justifyContent: 'center', margin: '-6px 0' }}>
           <button
             onClick={swap}
-            title="Intercanviar"
+            title={t('swap')}
             style={{ background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--muted)', borderRadius: 20, width: 28, height: 28, cursor: 'pointer', fontSize: 13, lineHeight: 1 }}
           >
             ⇅
           </button>
         </div>
-        <StationInput label="Destinació" value={dest} onChange={setDest} stations={stations} placeholder="On vas?" />
+        <StationInput label={t('destination')} value={dest} onChange={setDest} stations={stations} placeholder={t('toWhere')} />
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
-        {loading && <p style={{ color: 'var(--muted)', textAlign: 'center', padding: 20, fontSize: 13 }}>Calculant ruta…</p>}
+        {loading && <p style={{ color: 'var(--muted)', textAlign: 'center', padding: 20, fontSize: 13 }}>{t('calcRoute')}</p>}
         {error && !loading && <p style={{ color: 'var(--red)', textAlign: 'center', padding: 20, fontSize: 13 }}>{error}</p>}
         {!loading && !error && journeys && journeys.length === 0 && (
           <p style={{ color: 'var(--muted)', textAlign: 'center', padding: 20, fontSize: 13 }}>
-            No s&apos;ha trobat cap ruta directa per avui amb aquestes estacions.
+            {t('noDirectRoute')}
           </p>
         )}
         {!loading && !error && journeys && journeys.map((j, i) => (
@@ -194,7 +197,7 @@ export function TripPlanner({ lineColors }: TripPlannerProps) {
         ))}
         {!loading && !error && !journeys && (
           <p style={{ color: 'var(--muted)', textAlign: 'center', padding: 20, fontSize: 13 }}>
-            Tria origen i destinació per veure els pròxims trens i l&apos;hora d&apos;arribada.
+            {t('pickOriginDest')}
           </p>
         )}
       </div>

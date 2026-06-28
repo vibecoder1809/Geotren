@@ -8,15 +8,18 @@ import { TrainCard } from './TrainCard'
 import { DetailPanel } from './DetailPanel'
 import { StopPanel } from './StopPanel'
 import { TripPlanner } from './TripPlanner'
+import { LanguagePicker } from './Header'
+import { useI18n, type TransKey } from '@/lib/i18n'
 
-const LINE_GROUPS: { key: string; label: string; prefix: RegExp }[] = [
-  { key: 'L', label: 'L — Urbà',   prefix: /^L/ },
-  { key: 'S', label: 'S — Vallès', prefix: /^S/ },
-  { key: 'R', label: 'R — Reg.',   prefix: /^R/ },
-  { key: 'Other', label: 'Altres', prefix: /^(?!L|S|R)/ },
+const LINE_GROUPS: { key: string; labelKey: TransKey; prefix: RegExp }[] = [
+  { key: 'L', labelKey: 'groupUrbanShort',    prefix: /^L/ },
+  { key: 'S', labelKey: 'groupVallesShort',   prefix: /^S/ },
+  { key: 'R', labelKey: 'groupRegionalShort', prefix: /^R/ },
+  { key: 'Other', labelKey: 'groupOther',     prefix: /^(?!L|S|R)/ },
 ]
 
 function useRelativeTime(lastUpdate: Date | null): string {
+  const { t } = useI18n()
   const [, setTick] = useState(0)
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 1000)
@@ -24,10 +27,10 @@ function useRelativeTime(lastUpdate: Date | null): string {
   }, [])
   if (!lastUpdate) return '—'
   const secs = Math.round((Date.now() - lastUpdate.getTime()) / 1000)
-  if (secs < 5) return 'ara mateix'
-  if (secs < 60) return `fa ${secs}s`
+  if (secs < 5) return t('justNow')
+  if (secs < 60) return t('secsAgo', secs)
   const mins = Math.floor(secs / 60)
-  return `fa ${mins}m`
+  return t('minsAgo', mins)
 }
 
 const MapView = dynamic(() => import('./MapView'), { ssr: false })
@@ -70,6 +73,7 @@ const PREVIEW_COUNT = 5
 const EXPANDED_COUNT = 10
 
 function MobileAlertBanner({ alerts }: { alerts: Alert[] }) {
+  const { t } = useI18n()
   const preview = alerts.slice(0, PREVIEW_COUNT)
   const [idx, setIdx]           = useState(0)
   const [expanded, setExpanded] = useState(false)
@@ -110,7 +114,7 @@ function MobileAlertBanner({ alerts }: { alerts: Alert[] }) {
         fontSize: 11, fontWeight: 600,
         opacity: fade ? 1 : 0, transition: 'opacity 0.25s',
       }}>
-        <span style={{ fontWeight: 700, flexShrink: 0 }}>ALERTA</span>
+        <span style={{ fontWeight: 700, flexShrink: 0 }}>{t('alert')}</span>
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{visible?.header}</span>
         {preview.length > 1 && (
           <span style={{ fontSize: 10, flexShrink: 0, opacity: 0.7 }}>
@@ -145,6 +149,7 @@ export function MobileLayout({
   onToggleLine, onSelectTrain, onSelectStop,
   onCloseTrain, onCloseStop, onRefresh, onThemeToggle,
 }: MobileLayoutProps) {
+  const { t } = useI18n()
   const [sheetRatio, setSheetRatio]     = useState(SNAP_PEEK)
   const [activeTab, setActiveTab]       = useState<'trains' | 'stations' | 'plan'>('trains')
   const [stationQuery, setStationQuery] = useState('')
@@ -219,15 +224,16 @@ export function MobileLayout({
 
         <div style={{ pointerEvents: 'auto', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'var(--green)', fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--green)', display: 'inline-block', animation: 'pulse-dot 1.5s infinite' }} />
-          En viu
+          {t('live')}
         </div>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, pointerEvents: 'auto' }}>
+          <LanguagePicker compact />
           <button
             onClick={onThemeToggle}
             style={{ background: 'var(--bg2)', border: '1px solid var(--border2)', color: 'var(--muted)', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}
           >
-            Tema
+            {t('theme')}
           </button>
           <button
             onClick={onRefresh}
@@ -315,7 +321,7 @@ export function MobileLayout({
                 textTransform: 'uppercase', letterSpacing: '0.5px', fontFamily: 'inherit',
               }}
             >
-              {tab === 'trains' ? `Trens (${filteredTrains.length})` : tab === 'stations' ? 'Estacions' : 'Anar a…'}
+              {tab === 'trains' ? `${t('tabTrains')} (${filteredTrains.length})` : tab === 'stations' ? t('tabStations') : t('tabPlan')}
             </button>
           ))}
         </div>
@@ -328,7 +334,7 @@ export function MobileLayout({
               onClick={() => onToggleLine('ALL')}
               style={{ flexShrink: 0, padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${activeLines.has('ALL') ? 'var(--text)' : 'transparent'}`, background: 'var(--bg3)', color: 'var(--text)', opacity: activeLines.has('ALL') ? 1 : 0.5, fontFamily: 'var(--font-space-grotesk), sans-serif' }}
             >
-              Tots
+              {t('all')}
             </span>
             {lineGroups.map(g => {
               const expanded = expandedGroups.has(g.key)
@@ -339,7 +345,7 @@ export function MobileLayout({
                   onClick={() => toggleGroup(g.key)}
                   style={{ flexShrink: 0, padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${anyActive ? 'var(--accent)' : expanded ? 'var(--border2)' : 'transparent'}`, background: anyActive ? 'rgba(99,102,241,0.12)' : 'var(--bg3)', color: anyActive ? 'var(--accent)' : 'var(--muted)', fontFamily: 'var(--font-space-grotesk), sans-serif' }}
                 >
-                  {g.label} {expanded ? '▲' : '▼'}
+                  {t(g.labelKey)} {expanded ? '▲' : '▼'}
                 </span>
               )
             })}
@@ -370,7 +376,7 @@ export function MobileLayout({
             <TripPlanner lineColors={lineColors} />
           ) : activeTab === 'trains' ? (
             filteredTrains.length === 0
-              ? <p style={{ textAlign: 'center', padding: 30, color: 'var(--muted)', fontSize: 12 }}>Cap tren actiu.</p>
+              ? <p style={{ textAlign: 'center', padding: 30, color: 'var(--muted)', fontSize: 12 }}>{t('noActiveTrains')}</p>
               : filteredTrains.map(t => (
                   <TrainCard
                     key={t.id}
@@ -386,7 +392,7 @@ export function MobileLayout({
                 type="text"
                 value={stationQuery}
                 onChange={e => setStationQuery(e.target.value)}
-                placeholder="Cerca estació…"
+                placeholder={t('searchStationShort')}
                 style={{ width: '100%', padding: '10px 12px', background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8, color: 'var(--text)', fontFamily: 'inherit', fontSize: 13, outline: 'none', marginBottom: 8 }}
               />
               {filteredStops.map(s => (
@@ -400,10 +406,10 @@ export function MobileLayout({
                 </div>
               ))}
               {stationQuery && filteredStops.length === 0 && (
-                <p style={{ color: 'var(--muted)', fontSize: 12, padding: '8px 0' }}>Cap estació trobada.</p>
+                <p style={{ color: 'var(--muted)', fontSize: 12, padding: '8px 0' }}>{t('noStationFound')}</p>
               )}
               {!stationQuery && (
-                <p style={{ color: 'var(--muted)', fontSize: 12, padding: '8px 0' }}>Escriu el nom d'una estació.</p>
+                <p style={{ color: 'var(--muted)', fontSize: 12, padding: '8px 0' }}>{t('typeStationName')}</p>
               )}
             </div>
           )}

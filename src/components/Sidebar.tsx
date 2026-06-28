@@ -5,6 +5,7 @@ import type { Train, Stop } from '@/types'
 import { LINE_COLORS, STATION_CODES } from '@/lib/constants'
 import { TrainCard } from './TrainCard'
 import { TripPlanner } from './TripPlanner'
+import { useI18n, type TransKey } from '@/lib/i18n'
 
 type Tab = 'trains' | 'stations' | 'plan'
 
@@ -16,24 +17,23 @@ interface SidebarProps {
   activeLines: Set<string>
   selectedTrain: Train | null
   selectedStop: Stop | null
-  dailyPunctuality: Record<string, { onTime: number; total: number }>
   onToggleLine: (line: string) => void
   onSelectTrain: (train: Train) => void
   onSelectStop: (stop: Stop) => void
 }
 
-const LINE_GROUPS: { key: string; label: string; prefix: RegExp }[] = [
-  { key: 'L',     label: 'L — Barcelona urbà',           prefix: /^L/ },
-  { key: 'S',     label: 'S — Vallès',                   prefix: /^S/ },
-  { key: 'R',     label: 'R — Llobregat-Anoia regional', prefix: /^R/ },
-  { key: 'Other', label: 'Altres',                       prefix: /^(?!L|S|R)/ },
+const LINE_GROUPS: { key: string; labelKey: TransKey; prefix: RegExp }[] = [
+  { key: 'L',     labelKey: 'groupUrban',    prefix: /^L/ },
+  { key: 'S',     labelKey: 'groupValles',   prefix: /^S/ },
+  { key: 'R',     labelKey: 'groupRegional', prefix: /^R/ },
+  { key: 'Other', labelKey: 'groupOther',    prefix: /^(?!L|S|R)/ },
 ]
 
-export function Sidebar({ trains, stops, lines, lineColors, activeLines, selectedTrain, selectedStop, dailyPunctuality, onToggleLine, onSelectTrain, onSelectStop }: SidebarProps) {
+export function Sidebar({ trains, stops, lines, lineColors, activeLines, selectedTrain, selectedStop, onToggleLine, onSelectTrain, onSelectStop }: SidebarProps) {
+  const { t } = useI18n()
   const [activeTab, setActiveTab]           = useState<Tab>('trains')
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [filterOpen, setFilterOpen]         = useState(true)
-  const [punctualityOpen, setPunctualityOpen] = useState(false)
   const [stationQuery, setStationQuery]     = useState('')
   const [showDropdown, setShowDropdown]     = useState(false)
   const dropdownRef                         = useRef<HTMLDivElement>(null)
@@ -90,17 +90,6 @@ export function Sidebar({ trains, stops, lines, lineColors, activeLines, selecte
     [trains, selectedStationName],
   )
 
-  const punctuality = useMemo(() =>
-    lines
-      .map(line => {
-        const tally = dailyPunctuality[line]
-        if (!tally || tally.total === 0) return null
-        return { line, pct: Math.round((tally.onTime / tally.total) * 100), total: tally.total }
-      })
-      .filter((d): d is { line: string; pct: number; total: number } => d !== null),
-    [lines, dailyPunctuality],
-  )
-
   const lineGroups = useMemo(() =>
     LINE_GROUPS.map(g => ({
       ...g,
@@ -143,7 +132,7 @@ export function Sidebar({ trains, stops, lines, lineColors, activeLines, selecte
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.05)' }}>
         {(['trains', 'stations', 'plan'] as Tab[]).map(tab => (
           <button key={tab} style={tabStyle(tab)} onClick={() => setActiveTab(tab)}>
-            {tab === 'trains' ? 'Trens' : tab === 'stations' ? 'Estacions' : 'Anar a…'}
+            {tab === 'trains' ? t('tabTrains') : tab === 'stations' ? t('tabStations') : t('tabPlan')}
           </button>
         ))}
       </div>
@@ -157,7 +146,7 @@ export function Sidebar({ trains, stops, lines, lineColors, activeLines, selecte
               onClick={() => setFilterOpen(o => !o)}
               style={{ display: 'flex', alignItems: 'center', width: '100%', padding: '10px 16px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontFamily: 'inherit' }}
             >
-              <span style={{ flex: 1, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', textAlign: 'left' }}>Filtre per Línia</span>
+              <span style={{ flex: 1, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', textAlign: 'left' }}>{t('filterByLine')}</span>
               <span style={{ fontSize: 9, opacity: 0.6 }}>{filterOpen ? '▲' : '▼'}</span>
             </button>
             {filterOpen && <div style={{ padding: '0 16px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -165,7 +154,7 @@ export function Sidebar({ trains, stops, lines, lineColors, activeLines, selecte
                 onClick={() => onToggleLine('ALL')}
                 style={{ alignSelf: 'flex-start', padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${activeLines.has('ALL') ? 'var(--text)' : 'transparent'}`, background: 'var(--bg3)', color: 'var(--text)', opacity: activeLines.has('ALL') ? 1 : 0.45, transition: 'all 0.15s', fontFamily: 'var(--font-space-grotesk), sans-serif' }}
               >
-                Tots
+                {t('all')}
               </span>
 
               {lineGroups.map(g => {
@@ -177,7 +166,7 @@ export function Sidebar({ trains, stops, lines, lineColors, activeLines, selecte
                       onClick={() => toggleGroup(g.key)}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: anyActive ? 'var(--accent)10' : 'var(--bg3)', border: `1px solid ${anyActive ? 'var(--accent)' : 'var(--border2)'}`, borderRadius: 7, padding: '5px 10px', cursor: 'pointer', color: anyActive ? 'var(--accent)' : 'var(--muted)', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-space-grotesk), sans-serif', textAlign: 'left', transition: 'all 0.15s' }}
                     >
-                      <span style={{ flex: 1 }}>{g.label}</span>
+                      <span style={{ flex: 1 }}>{t(g.labelKey)}</span>
                       <span style={{ fontSize: 9, opacity: 0.6 }}>{expanded ? '▲' : '▼'}</span>
                     </button>
 
@@ -204,37 +193,10 @@ export function Sidebar({ trains, stops, lines, lineColors, activeLines, selecte
             </div>}
           </div>
 
-          {/* Punctuality chart */}
-          <div style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-            <button
-              onClick={() => setPunctualityOpen(o => !o)}
-              style={{ display: 'flex', alignItems: 'center', width: '100%', padding: '10px 16px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontFamily: 'inherit' }}
-            >
-              <span style={{ flex: 1, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', textAlign: 'left' }}>Puntualitat Avui (%)</span>
-              <span style={{ fontSize: 9, opacity: 0.6 }}>{punctualityOpen ? '▲' : '▼'}</span>
-            </button>
-            {punctualityOpen && <div style={{ padding: '0 16px 12px' }}>
-              <div style={{ background: 'var(--bg3)', padding: 8, borderRadius: 8 }}>
-                {punctuality.length === 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--muted)', padding: '4px 0' }}>Acumulant dades…</div>
-                )}
-                {punctuality.map(d => (
-                  <div key={d.line} title={`${d.total} observacions avui`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ width: 20, fontWeight: 600, fontSize: 11, fontFamily: 'var(--font-space-grotesk)' }}>{d.line}</span>
-                    <div style={{ flex: 1, height: 8, background: 'var(--border2)', borderRadius: 4, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${d.pct}%`, background: d.pct > 95 ? 'var(--green)' : d.pct > 75 ? 'var(--yellow)' : 'var(--red)', borderRadius: 4 }} />
-                    </div>
-                    <span style={{ color: 'var(--muted)', fontSize: 10 }}>{d.pct}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>}
-          </div>
-
           {/* Train list */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px 8px 4px' }}>
             {trains.length === 0
-              ? <p style={{ textAlign: 'center', padding: 30, color: 'var(--muted)', fontSize: 12 }}>Cap tren actiu.</p>
+              ? <p style={{ textAlign: 'center', padding: 30, color: 'var(--muted)', fontSize: 12 }}>{t('noActiveTrains')}</p>
               : trains.map(t => (
                   <TrainCard key={t.id} train={t} selected={selectedTrain?.id === t.id} onClick={() => onSelectTrain(t)} lineColors={lineColors} />
                 ))
@@ -248,7 +210,7 @@ export function Sidebar({ trains, stops, lines, lineColors, activeLines, selecte
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div ref={dropdownRef} style={{ padding: 16, borderBottom: '1px solid var(--border)', flexShrink: 0, position: 'relative' }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 10 }}>
-              Cerca Estació
+              {t('searchStation')}
             </div>
             <input
               type="text"
@@ -256,7 +218,7 @@ export function Sidebar({ trains, stops, lines, lineColors, activeLines, selecte
               onChange={e => { setStationQuery(e.target.value); setShowDropdown(true) }}
               onKeyDown={e => { if (e.key === 'Enter' && filteredStops.length > 0) selectStop(filteredStops[0]) }}
               onFocus={() => setShowDropdown(true)}
-              placeholder="Ex: Sant Cugat, Provença…"
+              placeholder={t('searchStationPlaceholder')}
               style={{ width: '100%', padding: '10px 12px', background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8, color: 'var(--text)', fontFamily: 'inherit', fontSize: 13, outline: 'none' }}
             />
             {showDropdown && filteredStops.length > 0 && (
@@ -281,42 +243,42 @@ export function Sidebar({ trains, stops, lines, lineColors, activeLines, selecte
                   {selectedStop.name}
                 </h3>
                 <p style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 12 }}>
-                  Trens passant ara o pròximament
+                  {t('passingNowSoon')}
                 </p>
-                {passingTrains.length > 0 ? passingTrains.map(t => {
-                  const color = lineColors[t.line] || LINE_COLORS[t.line] || '#7a82a0'
-                  const isHere = t.currentStop === selectedStationName
-                  const stopsAway = isHere ? 0 : t.upcomingStops.indexOf(selectedStationName!) + 1
+                {passingTrains.length > 0 ? passingTrains.map(train => {
+                  const color = lineColors[train.line] || LINE_COLORS[train.line] || '#7a82a0'
+                  const isHere = train.currentStop === selectedStationName
+                  const stopsAway = isHere ? 0 : train.upcomingStops.indexOf(selectedStationName!) + 1
                   return (
                     <div
-                      key={t.id}
-                      onClick={() => onSelectTrain(t)}
+                      key={train.id}
+                      onClick={() => onSelectTrain(train)}
                       style={{ border: `1px solid ${isHere ? color : 'var(--border)'}`, padding: 10, borderRadius: 8, marginBottom: 6, background: isHere ? `${color}12` : 'rgba(0,0,0,0.1)', cursor: 'pointer' }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                        <b style={{ color, fontSize: 13 }}>{t.line}</b>
+                        <b style={{ color, fontSize: 13 }}>{train.line}</b>
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                          {t.delayMinutes > 0 && <span style={{ color: 'var(--red)', fontWeight: 600, fontSize: 11 }}>+{t.delayMinutes}m</span>}
+                          {train.delayMinutes > 0 && <span style={{ color: 'var(--red)', fontWeight: 600, fontSize: 11 }}>+{train.delayMinutes}m</span>}
                           {isHere
-                            ? <span style={{ background: color, color: '#fff', fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4 }}>ARA AQUÍ</span>
-                            : <span style={{ color: 'var(--muted)', fontSize: 10 }}>{stopsAway} parada{stopsAway !== 1 ? 'es' : ''}</span>
+                            ? <span style={{ background: color, color: '#fff', fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4 }}>{t('hereNow')}</span>
+                            : <span style={{ color: 'var(--muted)', fontSize: 10 }}>{t('stopsAway', stopsAway)}</span>
                           }
                         </div>
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                        cap a <b style={{ color: 'var(--text)' }}>{t.destination}</b> · {Math.round(t.occupancyPercent)}% ocupació
+                        {t('towards')} <b style={{ color: 'var(--text)' }}>{train.destination}</b> · {Math.round(train.occupancyPercent)}% {t('occupancyLabel')}
                       </div>
                     </div>
                   )
                 }) : (
                   <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 8 }}>
-                    Cap tren detectat passant per aquesta estació.
+                    {t('noTrainHere')}
                   </p>
                 )}
               </>
             ) : (
               <p style={{ color: 'var(--muted)', textAlign: 'center', padding: 20, fontSize: 13 }}>
-                Cerca una estació per veure els trens.
+                {t('searchToSeeTrains')}
               </p>
             )}
           </div>

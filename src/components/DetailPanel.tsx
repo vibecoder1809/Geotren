@@ -2,6 +2,7 @@
 
 import type { Train } from '@/types'
 import { LINE_COLORS } from '@/lib/constants'
+import { useI18n } from '@/lib/i18n'
 
 function occColor(pct: number) {
   if (pct > 70) return 'var(--red)'
@@ -17,6 +18,7 @@ interface DetailPanelProps {
 
 
 export function DetailPanel({ train, lineColors, onClose }: DetailPanelProps) {
+  const { t } = useI18n()
   const open = train !== null
 
   return (
@@ -47,21 +49,21 @@ export function DetailPanel({ train, lineColors, onClose }: DetailPanelProps) {
           </button>
 
           <div style={{ fontSize: 11, fontWeight: 700, color: lineColors[train.line] || LINE_COLORS[train.line] || '#7a82a0', marginBottom: 4, fontFamily: 'var(--font-space-grotesk)' }}>
-            SERVEI ACTIU FGC
+            {t('activeService')}
           </div>
           <h2 style={{ fontFamily: 'var(--font-space-grotesk), sans-serif', fontSize: 24, marginBottom: 2 }}>
-            Línia {train.line}
+            {t('line')} {train.line}
           </h2>
           <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
-            Unitat <b>#{train.id.split('|')[1]?.slice(-6) ?? train.id}</b>
+            {t('unit')} <b>#{train.id.split('|')[1]?.slice(-6) ?? train.id}</b>
           </p>
 
           {/* Metrics grid */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
             {[
-              { label: 'Destinació final', value: train.destination, size: 13 },
-              { label: 'Puntualitat',      value: train.delayMinutes > 0 ? `+${train.delayMinutes} min` : 'Puntual', color: train.delayMinutes > 0 ? 'var(--red)' : 'var(--green)', size: 18 },
-              { label: 'Ocupació mitjana', value: `${Math.round(train.occupancyPercent)}%`, size: 18 },
+              { label: t('finalDest'),   value: train.destination, size: 13 },
+              { label: t('punctuality'), value: train.delayMinutes > 0 ? `+${train.delayMinutes} min` : t('onTime'), color: train.delayMinutes > 0 ? 'var(--red)' : 'var(--green)', size: 18 },
+              { label: t('avgOccupancy'), value: `${Math.round(train.occupancyPercent)}%`, size: 18 },
             ].map(m => (
               <div key={m.label} style={{ background: 'var(--bg3)', borderRadius: 10, padding: 10 }}>
                 <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 2 }}>{m.label}</div>
@@ -76,7 +78,7 @@ export function DetailPanel({ train, lineColors, onClose }: DetailPanelProps) {
           {/* Per-wagon occupancy — real data from ocupacio_m1/m2/mi/ri fields */}
           {train.wagons && train.wagons.some(w => w > 0) && (
             <>
-              <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 6 }}>Ocupació per cotxe</div>
+              <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 6 }}>{t('occupancyPerCar')}</div>
               <div style={{ display: 'flex', gap: 4, height: 48, alignItems: 'flex-end', marginBottom: 14 }}>
                 {train.wagons.map((v, i) => {
                   const label = ['M1', 'M2', 'MI', 'RI'][i] ?? `C${i + 1}`
@@ -93,24 +95,24 @@ export function DetailPanel({ train, lineColors, onClose }: DetailPanelProps) {
           )}
 
           {/* Route: origin → current → upcoming stops */}
-          <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 }}>Pròximes parades</div>
+          <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 }}>{t('upcomingStops')}</div>
           <div>
             {/* Origin */}
-            <StopRow name={`${train.origin} (origen)`} state="passed" />
+            <StopRow name={`${train.origin} (${t('origin2')})`} state="passed" />
 
             {/* Current stop if known */}
             {train.currentStop && (
-              <StopRow name={train.currentStop} state="current" label="Ara aquí" />
+              <StopRow name={train.currentStop} state="current" label={t('hereNowLabel')} />
             )}
 
             {/* Upcoming stops */}
             {train.upcomingStops.length === 0 && !train.currentStop && (
-              <StopRow name="En trànsit…" state="current" />
+              <StopRow name={t('inTransit')} state="current" />
             )}
             {train.upcomingStops.map((stop, i) => (
               <StopRow
                 key={i}
-                name={stop === train.destination ? `${stop} (terminal)` : stop}
+                name={stop === train.destination ? `${stop} (${t('terminal')})` : stop}
                 state={i === 0 && !train.currentStop ? 'current' : 'next'}
                 isLast={i === train.upcomingStops.length - 1}
               />

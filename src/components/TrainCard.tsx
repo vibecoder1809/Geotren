@@ -2,6 +2,7 @@
 
 import type { Train } from '@/types'
 import { LINE_COLORS } from '@/lib/constants'
+import { useI18n } from '@/lib/i18n'
 
 interface TrainCardProps {
   train: Train
@@ -16,21 +17,20 @@ function occStyle(pct: number) {
   return             { bg: 'rgba(34,197,94,0.12)',   color: '#4ade80' }
 }
 
-function etaLabel(etaUnix: number | undefined): string | null {
-  if (etaUnix == null) return null
-  const mins = Math.round((etaUnix * 1000 - Date.now()) / 60000)
-  if (mins <= 0) return 'ara'
-  if (mins === 1) return 'en 1 min'
-  return `en ${mins} min`
-}
-
 export function TrainCard({ train, selected, onClick, lineColors }: TrainCardProps) {
+  const { t } = useI18n()
   const colors = lineColors ?? LINE_COLORS
   const color  = colors[train.line] || '#7a82a0'
   const occ    = Math.round(train.occupancyPercent)
   const oStyle = occStyle(occ)
   const delayed = train.delayMinutes > 0
   const nextStop = train.upcomingStops[0]
+  const etaLabel = (etaUnix: number | undefined): string | null => {
+    if (etaUnix == null) return null
+    const mins = Math.round((etaUnix * 1000 - Date.now()) / 60000)
+    if (mins <= 0) return t('etaNow')
+    return t('etaIn', mins)
+  }
   const eta = etaLabel(train.nextStopEta)
 
   return (
@@ -59,7 +59,7 @@ export function TrainCard({ train, selected, onClick, lineColors }: TrainCardPro
           background: delayed ? 'rgba(239,68,68,0.12)' : oStyle.bg,
           color:      delayed ? '#f87171' : oStyle.color,
         }}>
-          {delayed ? `+${train.delayMinutes} min` : occ > 0 ? `${occ}% ocupat` : 'Puntual'}
+          {delayed ? `+${train.delayMinutes} min` : occ > 0 ? `${occ}% ${t('occupied')}` : t('onTime')}
         </span>
       </div>
 
@@ -71,14 +71,14 @@ export function TrainCard({ train, selected, onClick, lineColors }: TrainCardPro
       {/* Current stop if known */}
       {train.currentStop && (
         <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-          Ara a <span style={{ color: 'var(--text)' }}>{train.currentStop}</span>
+          {t('nowAt')} <span style={{ color: 'var(--text)' }}>{train.currentStop}</span>
         </div>
       )}
 
       {/* Next stop + ETA */}
       {nextStop && (
         <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>Pròxima parada: <span style={{ color: 'var(--text)' }}>{nextStop}</span></span>
+          <span>{t('nextStop')}: <span style={{ color: 'var(--text)' }}>{nextStop}</span></span>
           {eta && <span style={{ color: color, fontWeight: 600 }}>{eta}</span>}
         </div>
       )}

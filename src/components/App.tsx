@@ -10,6 +10,7 @@ import { DetailPanel } from './DetailPanel'
 import { StopPanel } from './StopPanel'
 import { MobileLayout } from './MobileLayout'
 import { useInterpolatedTrains } from '@/lib/interpolate'
+import { I18nProvider, useI18n } from '@/lib/i18n'
 
 const MapView = dynamic(() => import('./MapView'), { ssr: false })
 
@@ -18,6 +19,7 @@ const PREVIEW_COUNT = 5
 const EXPANDED_COUNT = 10
 
 function AlertBanner({ alerts }: { alerts: Alert[] }) {
+  const { t } = useI18n()
   const preview = alerts.slice(0, PREVIEW_COUNT)
   const [idx, setIdx]           = useState(0)
   const [expanded, setExpanded] = useState(false)
@@ -62,7 +64,7 @@ function AlertBanner({ alerts }: { alerts: Alert[] }) {
         display: 'flex', alignItems: 'center', gap: 8, padding: '6px 20px',
         opacity: fade ? 1 : 0, transition: 'opacity 0.25s',
       }}>
-        <span style={{ background: 'var(--yellow)', color: '#000', padding: '1px 6px', borderRadius: 4, fontSize: 10, fontWeight: 700, flexShrink: 0 }}>ALERTA</span>
+        <span style={{ background: 'var(--yellow)', color: '#000', padding: '1px 6px', borderRadius: 4, fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{t('alert')}</span>
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{visible?.header}</span>
         {preview.length > 1 && (
           <span style={{ color: 'var(--muted)', fontSize: 10, flexShrink: 0 }}>
@@ -89,6 +91,15 @@ function AlertBanner({ alerts }: { alerts: Alert[] }) {
 }
 
 export function App() {
+  return (
+    <I18nProvider>
+      <AppInner />
+    </I18nProvider>
+  )
+}
+
+function AppInner() {
+  const { t } = useI18n()
   const [trains, setTrains]               = useState<Train[]>([])
   const [stops, setStops]                 = useState<Stop[]>([])
   const [routes, setRoutes]               = useState<Route[]>([])
@@ -100,13 +111,8 @@ export function App() {
   const [refreshing, setRefreshing]       = useState(false)
   const [lastUpdate, setLastUpdate]       = useState<Date | null>(null)
   const [apiError, setApiError]           = useState<string | null>(null)
-  const [dailyPunctuality, setDailyPunctuality] = useState<Record<string, { onTime: number; total: number }>>({})
   const [isMobile, setIsMobile]           = useState(false)
 
-  const tallyRef = useRef<{ date: string; data: Record<string, { onTime: number; total: number }> }>({
-    date: new Date().toDateString(),
-    data: {},
-  })
   const prevDataRef = useRef<string>('')
 
   const lineColors = useMemo<Record<string, string>>(
@@ -145,25 +151,13 @@ export function App() {
         prevDataRef.current = fingerprint
         setLastUpdate(new Date())
       }
-
-      const today = new Date().toDateString()
-      if (tallyRef.current.date !== today) {
-        tallyRef.current = { date: today, data: {} }
-      }
-      const tally = tallyRef.current.data
-      for (const train of data) {
-        if (!tally[train.line]) tally[train.line] = { onTime: 0, total: 0 }
-        tally[train.line].total++
-        if (train.delayMinutes === 0) tally[train.line].onTime++
-      }
-      setDailyPunctuality({ ...tally })
     } catch (e) {
       console.error('Failed to fetch trains:', e)
-      setApiError("No es pot connectar amb l'API de trens")
+      setApiError(t('apiConnectError'))
     } finally {
       if (showLoader) setRefreshing(false)
     }
-  }, [])
+  }, [t])
 
   const handleSelectTrain = useCallback((t: Train) => {
     setSelectedTrain(t)
@@ -298,7 +292,6 @@ export function App() {
         activeLines={activeLines}
         selectedTrain={selectedTrain}
         selectedStop={selectedStop}
-        dailyPunctuality={dailyPunctuality}
         onToggleLine={toggleLine}
         onSelectTrain={handleSelectTrain}
         onSelectStop={handleSelectStop}
