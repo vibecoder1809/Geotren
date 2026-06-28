@@ -81,7 +81,7 @@ export function DetailPanel({ train, lineColors, onClose }: DetailPanelProps) {
               <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 6 }}>{t('occupancyPerCar')}</div>
               <div style={{ display: 'flex', gap: 4, height: 48, alignItems: 'flex-end', marginBottom: 14 }}>
                 {train.wagons.map((v, i) => {
-                  const label = ['M1', 'M2', 'MI', 'RI'][i] ?? `C${i + 1}`
+                  const label = String(i + 1)
                   const pct = Math.max(6, Math.min(98, Math.round(v)))
                   const c = occColor(v)
                   return (

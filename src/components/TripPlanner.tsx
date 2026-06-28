@@ -15,6 +15,49 @@ function fmtTime(sec: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
+// Seconds-since-local-midnight right now (matches planner's depTime units).
+function nowSecondsOfDay(): number {
+  const n = new Date()
+  return n.getHours() * 3600 + n.getMinutes() * 60 + n.getSeconds()
+}
+
+// Live countdown (in seconds) until this journey's train reaches the origin.
+// depTime is scheduled seconds-since-midnight; live delay (minutes) pushes it
+// later. Re-evaluates every second. Returns null once the train has departed.
+function useDepartureCountdown(depTime: number, liveDelayMin: number | undefined, live: boolean): number | null {
+  const target = depTime + (liveDelayMin && liveDelayMin > 0 ? liveDelayMin * 60 : 0)
+  const compute = () => target - nowSecondsOfDay()
+  const [remaining, setRemaining] = useState(compute)
+  useEffect(() => {
+    if (!live) return
+    setRemaining(compute())
+    const id = setInterval(() => setRemaining(compute()), 1000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, live])
+  if (!live) return null
+  return remaining <= -60 ? null : remaining
+}
+
+function fmtCountdown(sec: number): string {
+  const clamped = Math.max(0, sec)
+  const m = Math.floor(clamped / 60)
+  const s = clamped % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+// Local YYYY-MM-DD `offset` days from today, for the date picker bounds. Must
+// stay in sync with MAX_PLAN_DAYS_AHEAD on the server.
+const MAX_DAYS_AHEAD = 7
+function isoDay(offset: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + offset)
+  const y = d.getFullYear()
+  const mo = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${mo}-${day}`
+}
+
 // A station autocomplete input.
 function StationInput({
   label, value, onChange, stations, placeholder,
@@ -87,9 +130,12 @@ function LinePill({ line, lineColors }: { line: string; lineColors: Record<strin
   )
 }
 
-function JourneyCard({ journey, lineColors, best }: { journey: Journey; lineColors: Record<string, string>; best: boolean }) {
+function JourneyCard({ journey, lineColors, best, live }: { journey: Journey; lineColors: Record<string, string>; best: boolean; live: boolean }) {
   const { t } = useI18n()
   const delayed = journey.liveDelayMin && journey.liveDelayMin > 0
+  // The live countdown only makes sense for today's plan; for a future date the
+  // scheduled departure time is shown without a ticking timer.
+  const countdown = useDepartureCountdown(journey.depTime, journey.liveDelayMin, live)
   return (
     <div style={{ border: `1px solid ${best ? 'var(--accent)' : 'var(--border)'}`, background: best ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.06)', borderRadius: 10, padding: 12, marginBottom: 8 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -109,6 +155,26 @@ function JourneyCard({ journey, lineColors, best }: { journey: Journey; lineColo
           </div>
         </div>
       </div>
+
+      {/* live countdown: how long until this train reaches the origin (today only) */}
+      {live && (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 4, marginBottom: 2 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+            {countdown === null ? t('departed') : t('departsIn')}
+          </span>
+          {countdown !== null && (
+            <span style={{
+              fontFamily: 'var(--font-space-grotesk), monospace',
+              fontSize: 17,
+              fontWeight: 700,
+              fontVariantNumeric: 'tabular-nums',
+              color: countdown <= 60 ? 'var(--red)' : best ? 'var(--accent)' : 'var(--text)',
+            }}>
+              {fmtCountdown(countdown)}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* leg chain */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
@@ -139,6 +205,8 @@ export function TripPlanner({ lineColors }: TripPlannerProps) {
   const [error, setError]       = useState<string | null>(null)
   // Departure time. `null` means "leave now" (server uses current time).
   const [depTime, setDepTime]   = useState<string | null>(null)
+  // Departure date (YYYY-MM-DD). `null` means today.
+  const [depDate, setDepDate]   = useState<string | null>(null)
   // Step-free itinerary text for the current origin→dest pair (null = none).
   const [stepFree, setStepFree] = useState<string | null>(null)
   const [showStepFree, setShowStepFree] = useState(false)
@@ -157,6 +225,7 @@ export function TripPlanner({ lineColors }: TripPlannerProps) {
     try {
       let qs = `from=${encodeURIComponent(origin.code)}&to=${encodeURIComponent(dest.code)}`
       if (depTime) qs += `&after=${encodeURIComponent(depTime)}`
+      if (depDate) qs += `&date=${encodeURIComponent(depDate)}`
       const res = await fetch(`/api/plan?${qs}`)
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? t('genericError')); return }
@@ -166,9 +235,9 @@ export function TripPlanner({ lineColors }: TripPlannerProps) {
     } finally {
       setLoading(false)
     }
-  }, [origin, dest, depTime, t])
+  }, [origin, dest, depTime, depDate, t])
 
-  // Auto-search when both ends are picked (re-runs when departure time changes).
+  // Auto-search when both ends are picked (re-runs when time or date changes).
   useEffect(() => {
     if (origin && dest && origin.code !== dest.code) search()
   }, [origin, dest, search])
@@ -209,28 +278,54 @@ export function TripPlanner({ lineColors }: TripPlannerProps) {
               const now = new Date()
               setDepTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`)
             }}
-            style={{ alignSelf: 'flex-start', background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: 0 }}
+            style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: 0 }}
           >
-            {t('leaveNow')} · {t('changeTime')}
+            <span>{t('leaveNow')} · {t('changeTime')}</span>
+            <span aria-hidden style={{ fontSize: 10, lineHeight: 1 }}>▾</span>
           </button>
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
-              {t('leaveAt')}
-            </span>
-            <input
-              type="time"
-              value={depTime}
-              onChange={e => setDepTime(e.target.value || null)}
-              style={{ background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8, color: 'var(--text)', fontFamily: 'inherit', fontSize: 13, padding: '7px 9px', outline: 'none' }}
-            />
-            <button
-              onClick={() => setDepTime(null)}
-              title={t('leaveNow')}
-              style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: 0 }}
-            >
-              {t('leaveNow')}
-            </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.6px', minWidth: 52 }}>
+                {t('leaveAt')}
+              </span>
+              <input
+                type="time"
+                value={depTime}
+                onChange={e => setDepTime(e.target.value || null)}
+                style={{ background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8, color: 'var(--text)', fontFamily: 'inherit', fontSize: 13, padding: '7px 9px', outline: 'none' }}
+              />
+              <button
+                onClick={() => { setDepTime(null); setDepDate(null) }}
+                title={t('leaveNow')}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: 0 }}
+              >
+                <span>{t('leaveNow')}</span>
+                <span aria-hidden style={{ fontSize: 10, lineHeight: 1 }}>▴</span>
+              </button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.6px', minWidth: 52 }}>
+                {t('onDay')}
+              </span>
+              <input
+                type="date"
+                value={depDate ?? isoDay(0)}
+                min={isoDay(0)}
+                max={isoDay(MAX_DAYS_AHEAD)}
+                onChange={e => setDepDate(e.target.value && e.target.value !== isoDay(0) ? e.target.value : null)}
+                style={{ background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8, color: 'var(--text)', fontFamily: 'inherit', fontSize: 13, padding: '7px 9px', outline: 'none' }}
+              />
+              {depDate && (
+                <button
+                  onClick={() => setDepDate(null)}
+                  title={t('today')}
+                  style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: 0 }}
+                >
+                  {t('today')}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -261,7 +356,7 @@ export function TripPlanner({ lineColors }: TripPlannerProps) {
           </div>
         )}
         {!loading && !error && journeys && journeys.map((j, i) => (
-          <JourneyCard key={i} journey={j} lineColors={lineColors} best={i === 0} />
+          <JourneyCard key={i} journey={j} lineColors={lineColors} best={i === 0} live={depDate === null} />
         ))}
         {!loading && !error && !journeys && (
           <p style={{ color: 'var(--muted)', textAlign: 'center', padding: 20, fontSize: 13 }}>

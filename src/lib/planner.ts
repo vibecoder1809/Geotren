@@ -1,5 +1,5 @@
 import { STATION_CODES } from './constants'
-import { fgcExport } from './fgc'
+import { fgcExport, fgcGtfsFile, fgcAllRecords } from './fgc'
 
 // Minimum time (seconds) needed to change between two trips at a station.
 const TRANSFER_SECONDS = 120
@@ -160,8 +160,17 @@ async function buildTimetable(): Promise<TimetableData> {
     }
   }
 
-  // Flatten trips into connections (and keep per-trip ordered connections for
-  // journey reconstruction).
+  return assembleTimetable(todayLocalISO(), trips, stationNames)
+}
+
+// Flatten built trips into the sorted connection list + per-trip connection
+// index the planner consumes. Shared by the today (viajes-de-hoy) builder and
+// the date-specific GTFS builder.
+function assembleTimetable(
+  date: string,
+  trips: Map<number, Trip>,
+  stationNames: Map<string, string>,
+): TimetableData {
   const connections: Connection[] = []
   const tripConns = new Map<number, Connection[]>()
   for (const trip of trips.values()) {
@@ -188,24 +197,141 @@ async function buildTimetable(): Promise<TimetableData> {
   }
   connections.sort((x, y) => x.depTime - y.depTime)
 
-  return { date: todayLocalISO(), connections, tripConns, trips, stationNames }
+  return { date, connections, tripConns, trips, stationNames }
 }
 
-async function getTimetable(): Promise<TimetableData> {
+// ---- date-specific build (full static GTFS) ----------------------------
+
+// Maximum days ahead a journey may be planned for. The static GTFS feed covers
+// further out, but we bound the work (and the cache) to a sensible window.
+export const MAX_PLAN_DAYS_AHEAD = 7
+
+// Parse a minimal CSV (no embedded newlines; quotes tolerated but FGC's GTFS
+// files don't use them) into rows keyed by header. Lightweight on purpose —
+// stop_times.txt is ~15MB, so we avoid per-cell allocation beyond the split.
+function parseCsv(text: string): Record<string, string>[] {
+  const lines = text.split('\n')
+  const header = lines[0]?.replace(/\r$/, '').split(',') ?? []
+  const out: Record<string, string>[] = []
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (!line) continue
+    const cells = line.replace(/\r$/, '').split(',')
+    const row: Record<string, string> = {}
+    for (let j = 0; j < header.length; j++) row[header[j]] = cells[j] ?? ''
+    out.push(row)
+  }
+  return out
+}
+
+interface CalendarDateRec { service_id: string; date: string; exception_type: number }
+
+// Build the timetable for a specific service date from the static GTFS feed.
+// Unlike the today builder (which chains a flat dataset), GTFS stop_times has a
+// real trip_id per run, so trips are grouped directly — simpler and exact.
+async function buildTimetableForDate(date: string): Promise<TimetableData> {
+  // 1. Which services run on this date (exception_type 1 = added/runs).
+  const calRows = await fgcAllRecords<CalendarDateRec>(
+    'calendar_dates',
+    { where: `date=date'${date}' AND exception_type=1`, select: 'service_id' },
+    86400,
+  )
+  const runningServices = new Set(calRows.map(r => r.service_id))
+  if (runningServices.size === 0) {
+    return { date, connections: [], tripConns: new Map(), trips: new Map(), stationNames: new Map() }
+  }
+
+  // 2. Pull the static GTFS member files in parallel.
+  const [tripsTxt, stopTimesTxt, stopsTxt] = await Promise.all([
+    fgcGtfsFile('trips.txt'),
+    fgcGtfsFile('stop_times.txt'),
+    fgcGtfsFile('stops.txt'),
+  ])
+
+  // stop_id -> { parent code, display name }
+  const stopInfo = new Map<string, { parent: string; name: string }>()
+  const stationNames = new Map<string, string>()
+  for (const s of parseCsv(stopsTxt)) {
+    const stopId = s.stop_id
+    if (!stopId) continue
+    const parent = s.parent_station || stopId.replace(/\d+$/, '')
+    stopInfo.set(stopId, { parent, name: s.stop_name })
+    if (!stationNames.has(parent)) {
+      stationNames.set(parent, STATION_CODES[parent] ?? s.stop_name)
+    }
+  }
+
+  // trip_id -> { line, headsign } for trips whose service runs today.
+  const tripMeta = new Map<string, { line: string; headsign: string }>()
+  for (const tr of parseCsv(tripsTxt)) {
+    if (!runningServices.has(tr.service_id)) continue
+    // route_id equals route_short_name in this feed (e.g. "R5", "L6").
+    tripMeta.set(tr.trip_id, { line: tr.route_id, headsign: tr.trip_headsign })
+  }
+
+  // 3. Group stop_times rows by trip_id (only for running trips), building the
+  // ordered stop list per trip.
+  interface RawStopTime { seq: number; arr: number; dep: number; parent: string; name: string }
+  const byTrip = new Map<string, RawStopTime[]>()
+  for (const st of parseCsv(stopTimesTxt)) {
+    const meta = tripMeta.get(st.trip_id)
+    if (!meta) continue
+    const info = stopInfo.get(st.stop_id)
+    if (!info) continue
+    const dep = parseClock(st.departure_time)
+    const arr = parseClock(st.arrival_time) ?? dep
+    if (dep == null || arr == null) continue
+    const list = byTrip.get(st.trip_id)
+    const row = { seq: Number(st.stop_sequence), arr, dep, parent: info.parent, name: info.name }
+    if (list) list.push(row)
+    else byTrip.set(st.trip_id, [row])
+  }
+
+  // 4. Materialise Trip objects with integer ids.
+  const trips = new Map<number, Trip>()
+  let id = 0
+  for (const [tripId, rows] of byTrip) {
+    const meta = tripMeta.get(tripId)!
+    rows.sort((a, b) => a.seq - b.seq)
+    const stops: TripStop[] = rows.map(r => ({
+      parent: r.parent, name: r.name, seq: r.seq, arrival: r.arr, departure: r.dep,
+    }))
+    if (stops.length < 2) continue
+    trips.set(id, { id, line: meta.line, headsign: meta.headsign, stops })
+    id++
+  }
+
+  return assembleTimetable(date, trips, stationNames)
+}
+
+// Cache built timetables per service date (today via the fast viajes-de-hoy
+// path, other dates via the static GTFS builder). Bounded to the planning
+// window so it can't grow without limit.
+const dateCache = new Map<string, TimetableData>()
+const dateInflight = new Map<string, Promise<TimetableData>>()
+
+async function getTimetable(date?: string): Promise<TimetableData> {
   const today = todayLocalISO()
-  if (cache && cache.date === today) return cache
-  if (inflight) return inflight
-  inflight = buildTimetable()
-    .then(data => {
-      cache = data
-      inflight = null
-      return data
-    })
-    .catch(err => {
-      inflight = null
-      throw err
-    })
-  return inflight
+  const target = date ?? today
+
+  if (target === today) {
+    if (cache && cache.date === today) return cache
+    if (inflight) return inflight
+    inflight = buildTimetable()
+      .then(data => { cache = data; inflight = null; return data })
+      .catch(err => { inflight = null; throw err })
+    return inflight
+  }
+
+  const cached = dateCache.get(target)
+  if (cached) return cached
+  const pending = dateInflight.get(target)
+  if (pending) return pending
+  const build = buildTimetableForDate(target)
+    .then(data => { dateCache.set(target, data); dateInflight.delete(target); return data })
+    .catch(err => { dateInflight.delete(target); throw err })
+  dateInflight.set(target, build)
+  return build
 }
 
 // ---- public: station list ----------------------------------------------
@@ -353,8 +479,9 @@ export async function planJourney(
   destCode: string,
   afterSeconds: number,
   lineDelays?: Map<string, number>,
+  date?: string,
 ): Promise<Journey | null> {
-  const data = await getTimetable()
+  const data = await getTimetable(date)
   if (originCode === destCode) return null
   if (!data.stationNames.has(originCode) || !data.stationNames.has(destCode)) return null
 
@@ -431,11 +558,12 @@ export async function planJourneys(
   afterSeconds: number,
   count = 4,
   lineDelays?: Map<string, number>,
+  date?: string,
 ): Promise<Journey[]> {
   const journeys: Journey[] = []
   let after = afterSeconds
   for (let i = 0; i < count; i++) {
-    const j = await planJourney(originCode, destCode, after, lineDelays)
+    const j = await planJourney(originCode, destCode, after, lineDelays, date)
     if (!j) break
     journeys.push(j)
     // Next search starts one second after this option's first departure.

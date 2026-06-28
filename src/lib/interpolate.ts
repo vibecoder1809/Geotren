@@ -105,6 +105,9 @@ interface TrainState {
   direction:  1 | -1
   lat:        number
   lng:        number
+  // Animation speed (m/s) for this train. Derived from the real distance to the
+  // next stop and the real ETA when available (dead-reckoning), else SPEED_MS.
+  speed:      number
   // Distances (m along polyline) of upcoming stops the train should pause at,
   // and the set already serviced this leg so we don't dwell twice.
   stopDists:  number[]
@@ -136,6 +139,31 @@ function upcomingStopDists(train: Train, stops: Stop[], pl: Polyline): number[] 
     if (d != null) dists.push(d)
   }
   return dists.sort((a, b) => a - b)
+}
+
+// Dead-reckon the animation speed (m/s) from the real distance to the next
+// upcoming stop and its real ETA. This makes the train cover the actual gap in
+// the actual time the API predicts, rather than gliding at a fixed guess.
+// Falls back to SPEED_MS when there's no usable ETA or it's already in the past.
+function resolveSpeed(
+  currentDistAlong: number,
+  train: Train,
+  stops: Stop[],
+  pl: Polyline,
+): number {
+  if (train.nextStopEta == null || !train.upcomingStops.length) return SPEED_MS
+  const secsLeft = train.nextStopEta - Date.now() / 1000
+  if (secsLeft <= 1) return SPEED_MS  // arriving now / stale ETA — use default
+
+  const nextStopD = findStopDist(train.upcomingStops[0], stops, pl)
+  if (nextStopD == null) return SPEED_MS
+  const gap = Math.abs(nextStopD - currentDistAlong)
+  if (gap < STOP_TRIGGER_M) return SPEED_MS  // already essentially there
+
+  const speed = gap / secsLeft
+  // Guard against absurd values from bad data (e.g. wrong stop match).
+  if (!Number.isFinite(speed) || speed < 1 || speed > 45) return SPEED_MS
+  return speed
 }
 
 // Determine which direction along the polyline the train is heading.
@@ -211,6 +239,7 @@ export function useInterpolatedTrains(
           direction: dir,
           lat: train.lat,
           lng: train.lng,
+          speed: resolveSpeed(realDist, train, stops, pl),
           stopDists: upcomingStopDists(train, stops, pl),
           servicedStops: new Set(),
         })
@@ -228,6 +257,10 @@ export function useInterpolatedTrains(
 
         // Update direction from fresh upcoming-stops data
         existing.direction = resolveDirection(existing.distAlong, train, stops, pl)
+
+        // Re-derive speed from the fresh ETA so each leg animates at the rate
+        // the API actually predicts.
+        existing.speed = resolveSpeed(existing.distAlong, train, stops, pl)
 
         // Refresh the upcoming-stop distances from the new snapshot, and forget
         // serviced stops that are no longer upcoming.
@@ -259,7 +292,7 @@ export function useInterpolatedTrains(
 
       for (const state of stateMap.current.values()) {
         if (now < state.dwellUntil) continue   // dwelling at station
-        const move = SPEED_MS * dt * state.direction
+        const move = state.speed * dt * state.direction
         const next = state.distAlong + move
 
         // Clamp to polyline ends

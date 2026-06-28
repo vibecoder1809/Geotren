@@ -82,6 +82,8 @@ const DICT = {
   nextStop:        { ca: 'Pròxima parada', es: 'Próxima parada', en: 'Next stop' },
   etaNow:          { ca: 'ara',        es: 'ahora',       en: 'now' },
   etaIn:           { ca: (m: number) => m === 1 ? 'en 1 min' : `en ${m} min`, es: (m: number) => m === 1 ? 'en 1 min' : `en ${m} min`, en: (m: number) => m === 1 ? 'in 1 min' : `in ${m} min` },
+  departsIn:       { ca: 'arriba en',  es: 'llega en',    en: 'arrives in' },
+  departed:        { ca: 'sortit',     es: 'salido',      en: 'departed' },
 
   // ── StopPanel ──
   stationFgc:      { ca: 'ESTACIÓ FGC', es: 'ESTACIÓN FGC', en: 'FGC STATION' },
@@ -113,6 +115,8 @@ const DICT = {
   leaveNow:        { ca: 'Sortir ara',  es: 'Salir ahora',  en: 'Leave now' },
   leaveAt:         { ca: 'Sortir a les', es: 'Salir a las', en: 'Leave at' },
   changeTime:      { ca: 'Canviar hora', es: 'Cambiar hora', en: 'Change time' },
+  onDay:           { ca: 'el dia',     es: 'el día',      en: 'on' },
+  today:           { ca: 'avui',       es: 'hoy',         en: 'today' },
   stepFreeRoute:   { ca: 'Itinerari accessible', es: 'Itinerario accesible', en: 'Step-free route' },
   showStepFree:    { ca: 'Veure itinerari sense escales', es: 'Ver itinerario sin escalones', en: 'Show step-free route' },
   hideStepFree:    { ca: 'Amagar itinerari', es: 'Ocultar itinerario', en: 'Hide route' },

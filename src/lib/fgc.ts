@@ -71,6 +71,27 @@ export async function fgcExport<T>(dataset: string, revalidate = 3600): Promise<
 }
 
 /**
+ * Fetch a member file of the `gtfs_zip` dataset (e.g. `stop_times.txt`) as raw
+ * text. The dataset exposes each GTFS file as its own record with a download
+ * URL, so we resolve the filename to its URL then fetch the body. Returns the
+ * CSV text; callers parse it. These files are large and change at most daily,
+ * so the default revalidate is long. Too large for Next's data cache, so the
+ * body fetch is uncached (`no-store`) — only the small URL lookup is cached.
+ */
+export async function fgcGtfsFile(filename: string, revalidate = 86400): Promise<string> {
+  const page = await fgcRecords<{ file: { filename: string; url: string } }>(
+    'gtfs_zip',
+    { limit: 20 },
+    revalidate,
+  )
+  const url = page.results.find(r => r.file?.filename === filename)?.file?.url
+  if (!url) throw new Error(`gtfs_zip has no ${filename}`)
+  const res = await fetch(url, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`gtfs_zip/${filename} fetch ${res.status}`)
+  return res.text()
+}
+
+/**
  * Decode a GTFS-Realtime feed. These datasets expose a single record pointing
  * at a `.pb` protobuf file; we resolve that URL then decode it. Always fetched
  * fresh — realtime feeds must not be cached.

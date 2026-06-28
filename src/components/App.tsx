@@ -206,7 +206,7 @@ function AppInner() {
 
   useEffect(() => {
     fetchTrains(true)
-    const interval = setInterval(() => fetchTrains(false), 20_000)
+    const interval = setInterval(() => fetchTrains(false), 10_000)
     return () => clearInterval(interval)
   }, [fetchTrains])
 
