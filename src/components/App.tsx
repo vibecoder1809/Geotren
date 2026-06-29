@@ -325,7 +325,7 @@ function AppInner() {
           theme={theme}
         />
         <DetailPanel train={selectedTrain} lineColors={lineColors} onClose={handleCloseTrain} />
-        <StopPanel stop={selectedStop} onClose={handleCloseStop} />
+        <StopPanel stop={selectedStop} onClose={handleCloseStop} lineColors={lineColors} />
       </div>
     </div>
   )

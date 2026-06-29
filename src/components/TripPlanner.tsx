@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import type { PlannerStation, Journey } from '@/types'
 import { LINE_COLORS } from '@/lib/constants'
 import { useI18n } from '@/lib/i18n'
+import { useSavedRoutes, type SavedRoute } from '@/lib/savedRoutes'
 
 interface TripPlannerProps {
   lineColors: Record<string, string>
@@ -132,6 +133,36 @@ function LinePill({ line, lineColors }: { line: string; lineColors: Record<strin
   )
 }
 
+// A saved / recent route row: tappable to re-run the search, with an optional
+// star to (un)favorite it.
+function RouteRow({ route, faved, onPick, onToggleFav }: { route: SavedRoute; faved?: boolean; onPick: () => void; onToggleFav?: () => void }) {
+  const { t } = useI18n()
+  return (
+    <div
+      onClick={onPick}
+      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', background: 'var(--bg3)', marginBottom: 5 }}
+      onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg2)')}
+      onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg3)')}
+    >
+      <div style={{ flex: 1, minWidth: 0, fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{route.fromName}</span>
+        <span style={{ color: 'var(--muted)', flexShrink: 0 }}>→</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{route.toName}</span>
+      </div>
+      {onToggleFav && (
+        <button
+          onClick={e => { e.stopPropagation(); onToggleFav() }}
+          title={faved ? t('unsaveRoute') : t('saveRoute')}
+          aria-label={faved ? t('unsaveRoute') : t('saveRoute')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 14, lineHeight: 1, color: faved ? 'var(--accent)' : 'var(--muted)', flexShrink: 0 }}
+        >
+          {faved ? '★' : '☆'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function JourneyCard({ journey, lineColors, best, live, active, onClick }: { journey: Journey; lineColors: Record<string, string>; best: boolean; live: boolean; active: boolean; onClick: () => void }) {
   const { t } = useI18n()
   const delayed = journey.liveDelayMin && journey.liveDelayMin > 0
@@ -216,12 +247,27 @@ export function TripPlanner({ lineColors, selectedJourney, onSelectJourney }: Tr
   // Step-free itinerary text for the current origin→dest pair (null = none).
   const [stepFree, setStepFree] = useState<string | null>(null)
   const [showStepFree, setShowStepFree] = useState(false)
+  const { favorites, recents, isFavorite, toggleFavorite, recordRecent, clearRecents } = useSavedRoutes()
 
   useEffect(() => {
     fetch('/api/plan-stations')
       .then(r => r.json())
       .then((s: PlannerStation[]) => Array.isArray(s) && setStations(s))
       .catch(() => {})
+  }, [])
+
+  // The current origin→dest pair as a SavedRoute (null until both are picked).
+  const currentRoute = useMemo<SavedRoute | null>(
+    () => origin && dest && origin.code !== dest.code
+      ? { fromCode: origin.code, fromName: origin.name, toCode: dest.code, toName: dest.name }
+      : null,
+    [origin, dest],
+  )
+
+  // Fill the planner from a saved/recent route, which kicks off an auto-search.
+  const applyRoute = useCallback((r: SavedRoute) => {
+    setOrigin({ code: r.fromCode, name: r.fromName })
+    setDest({ code: r.toCode, name: r.toName })
   }, [])
 
   const search = useCallback(async () => {
@@ -239,12 +285,16 @@ export function TripPlanner({ lineColors, selectedJourney, onSelectJourney }: Tr
       setJourneys(found)
       // Auto-draw the best journey's path; clicking another card switches it.
       onSelectJourney(found[0] ?? null)
+      // Record a usable search in recents (only when a route was actually found).
+      if (found.length > 0) {
+        recordRecent({ fromCode: origin.code, fromName: origin.name, toCode: dest.code, toName: dest.name })
+      }
     } catch {
       setError(t('cannotConnect'))
     } finally {
       setLoading(false)
     }
-  }, [origin, dest, depTime, depDate, onSelectJourney, t])
+  }, [origin, dest, depTime, depDate, onSelectJourney, recordRecent, t])
 
   // Auto-search when both ends are picked (re-runs when time or date changes).
   useEffect(() => {
@@ -276,7 +326,7 @@ export function TripPlanner({ lineColors, selectedJourney, onSelectJourney }: Tr
     <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: 16, borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <StationInput label={t('origin')} value={origin} onChange={setOrigin} stations={stations} placeholder={t('fromWhere')} />
-        <div style={{ display: 'flex', justifyContent: 'center', margin: '-6px 0' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, margin: '-6px 0' }}>
           <button
             onClick={swap}
             title={t('swap')}
@@ -284,6 +334,16 @@ export function TripPlanner({ lineColors, selectedJourney, onSelectJourney }: Tr
           >
             ⇅
           </button>
+          {currentRoute && (
+            <button
+              onClick={() => toggleFavorite(currentRoute)}
+              title={isFavorite(currentRoute) ? t('unsaveRoute') : t('saveRoute')}
+              aria-label={isFavorite(currentRoute) ? t('unsaveRoute') : t('saveRoute')}
+              style={{ background: 'var(--bg3)', border: `1px solid ${isFavorite(currentRoute) ? 'var(--accent)' : 'var(--border2)'}`, color: isFavorite(currentRoute) ? 'var(--accent)' : 'var(--muted)', borderRadius: 20, width: 28, height: 28, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
+            >
+              {isFavorite(currentRoute) ? '★' : '☆'}
+            </button>
+          )}
         </div>
         <StationInput label={t('destination')} value={dest} onChange={setDest} stations={stations} placeholder={t('toWhere')} />
 
@@ -381,10 +441,41 @@ export function TripPlanner({ lineColors, selectedJourney, onSelectJourney }: Tr
             onClick={() => onSelectJourney(j)}
           />
         ))}
+        {/* Saved & recent routes — shown in the idle state, before a search. */}
         {!loading && !error && !journeys && (
-          <p style={{ color: 'var(--muted)', textAlign: 'center', padding: 20, fontSize: 13 }}>
-            {t('pickOriginDest')}
-          </p>
+          <>
+            {favorites.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span aria-hidden style={{ color: 'var(--accent)' }}>★</span>{t('savedRoutes')}
+                </div>
+                {favorites.map((r, i) => (
+                  <RouteRow key={`f${i}`} route={r} faved onPick={() => applyRoute(r)} onToggleFav={() => toggleFavorite(r)} />
+                ))}
+              </div>
+            )}
+
+            {recents.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+                  <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>{t('recentRoutes')}</span>
+                  <button
+                    onClick={clearRecents}
+                    style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 600, padding: 0 }}
+                  >
+                    {t('clearRecents')}
+                  </button>
+                </div>
+                {recents.map((r, i) => (
+                  <RouteRow key={`r${i}`} route={r} faved={isFavorite(r)} onPick={() => applyRoute(r)} onToggleFav={() => toggleFavorite(r)} />
+                ))}
+              </div>
+            )}
+
+            <p style={{ color: 'var(--muted)', textAlign: 'center', padding: 20, fontSize: 13 }}>
+              {t('pickOriginDest')}
+            </p>
+          </>
         )}
       </div>
     </div>

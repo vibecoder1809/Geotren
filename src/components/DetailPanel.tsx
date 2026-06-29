@@ -14,39 +14,26 @@ interface DetailPanelProps {
   train: Train | null
   lineColors: Record<string, string>
   onClose: () => void
+  /** Render as in-flow content inside the mobile bottom sheet (no absolute
+      desktop positioning, no close button — the sheet handle handles closing). */
+  mobile?: boolean
 }
 
 
-export function DetailPanel({ train, lineColors, onClose }: DetailPanelProps) {
+export function DetailPanel({ train, lineColors, onClose, mobile = false }: DetailPanelProps) {
   const { t } = useI18n()
   const open = train !== null
 
-  return (
-    <div style={{
-      position: 'absolute',
-      right: 20,
-      top: 20,
-      width: 320,
-      background: 'var(--bg2)',
-      border: '1px solid var(--border2)',
-      borderRadius: 16,
-      padding: 20,
-      transform: open ? 'translateX(0)' : 'translateX(360px)',
-      transition: 'transform 0.3s cubic-bezier(0.34,1.56,0.64,1)',
-      zIndex: 5,
-      maxHeight: 'calc(100% - 40px)',
-      overflowY: 'auto',
-      boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
-      pointerEvents: open ? 'auto' : 'none',
-    }}>
-      {train && (
+  const inner = train && (
         <>
-          <button
-            onClick={onClose}
-            style={{ position: 'absolute', top: 14, right: 14, background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--muted)', width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 12 }}
-          >
-            ✕
-          </button>
+          {!mobile && (
+            <button
+              onClick={onClose}
+              style={{ position: 'absolute', top: 14, right: 14, background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--muted)', width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 12 }}
+            >
+              ✕
+            </button>
+          )}
 
           <div style={{ fontSize: 11, fontWeight: 700, color: lineColors[train.line] || LINE_COLORS[train.line] || '#7a82a0', marginBottom: 4, fontFamily: 'var(--font-space-grotesk)' }}>
             {t('activeService')}
@@ -119,7 +106,34 @@ export function DetailPanel({ train, lineColors, onClose }: DetailPanelProps) {
             ))}
           </div>
         </>
-      )}
+  )
+
+  // Mobile: in-flow content inside the slide-up sheet (its wrapper handles the
+  // panel chrome, scrim and dismiss gesture).
+  if (mobile) {
+    return <div style={{ padding: '0 20px 24px' }}>{inner}</div>
+  }
+
+  // Desktop: absolutely positioned card sliding in from the right of the map.
+  return (
+    <div style={{
+      position: 'absolute',
+      right: 20,
+      top: 20,
+      width: 320,
+      background: 'var(--bg2)',
+      border: '1px solid var(--border2)',
+      borderRadius: 16,
+      padding: 20,
+      transform: open ? 'translateX(0)' : 'translateX(360px)',
+      transition: 'transform 0.3s cubic-bezier(0.34,1.56,0.64,1)',
+      zIndex: 5,
+      maxHeight: 'calc(100% - 40px)',
+      overflowY: 'auto',
+      boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+      pointerEvents: open ? 'auto' : 'none',
+    }}>
+      {inner}
     </div>
   )
 }

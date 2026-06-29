@@ -1,5 +1,6 @@
 import type { Stop, Alert, Route, StopArrival, StopDetail } from '@/types'
 import { fgcRecords, fgcAllRecords, fgcFeed } from './fgc'
+import { fetchTrains } from './geotren'
 
 type RawStop = {
   stop_id: string
@@ -112,6 +113,32 @@ export async function fetchTripInfo(): Promise<Map<string, TripInfo>> {
 export async function fetchTripDelays(): Promise<Map<string, number>> {
   const info = await fetchTripInfo()
   return new Map([...info.entries()].map(([id, v]) => [id, v.delay]))
+}
+
+// Median live delay (minutes) per line, from current train positions joined to
+// GTFS-RT trip delays. Only lines actually running late appear (delay > 0).
+// Shared by the trip planner and the station departures board.
+export async function fetchLineDelays(): Promise<Map<string, number>> {
+  const result = new Map<string, number>()
+  try {
+    const [trains, delays] = await Promise.all([fetchTrains(), fetchTripDelays()])
+    const byLine = new Map<string, number[]>()
+    for (const t of trains) {
+      const d = delays.get(t.id)
+      if (d == null) continue
+      const list = byLine.get(t.line)
+      if (list) list.push(d)
+      else byLine.set(t.line, [d])
+    }
+    for (const [line, list] of byLine) {
+      list.sort((a, b) => a - b)
+      const mid = list[Math.floor(list.length / 2)]
+      if (mid > 0) result.set(line, mid)
+    }
+  } catch (err) {
+    console.error('Live line-delay enrichment failed:', err)
+  }
+  return result
 }
 
 export interface VehiclePosition {

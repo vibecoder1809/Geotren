@@ -88,6 +88,9 @@ const DICT = {
   // ── StopPanel ──
   stationFgc:      { ca: 'ESTACIÓ FGC', es: 'ESTACIÓN FGC', en: 'FGC STATION' },
   accessible:      { ca: 'Accessible', es: 'Accesible',   en: 'Accessible' },
+  departures:      { ca: 'Pròximes sortides', es: 'Próximas salidas', en: 'Next departures' },
+  noDepartures:    { ca: 'Sense sortides programades.', es: 'Sin salidas programadas.', en: 'No scheduled departures.' },
+  minShort:        { ca: (m: number) => `${m} min`, es: (m: number) => `${m} min`, en: (m: number) => `${m} min` },
   loadingData:     { ca: 'Carregant dades…', es: 'Cargando datos…', en: 'Loading data…' },
   weatherLabel:    { ca: 'Meteorologia', es: 'Meteorología', en: 'Weather' },
   airQuality:      { ca: "Qualitat de l'aire", es: 'Calidad del aire', en: 'Air quality' },
@@ -121,6 +124,13 @@ const DICT = {
   stepFreeRoute:   { ca: 'Itinerari accessible', es: 'Itinerario accesible', en: 'Step-free route' },
   showStepFree:    { ca: 'Veure itinerari sense escales', es: 'Ver itinerario sin escalones', en: 'Show step-free route' },
   hideStepFree:    { ca: 'Amagar itinerari', es: 'Ocultar itinerario', en: 'Hide route' },
+
+  // ── Saved & recent routes ──
+  savedRoutes:     { ca: 'Trajectes desats', es: 'Trayectos guardados', en: 'Saved routes' },
+  recentRoutes:    { ca: 'Recents',        es: 'Recientes',    en: 'Recent' },
+  saveRoute:       { ca: 'Desa aquest trajecte', es: 'Guardar este trayecto', en: 'Save this route' },
+  unsaveRoute:     { ca: 'Treu dels desats', es: 'Quitar de guardados', en: 'Remove from saved' },
+  clearRecents:    { ca: 'Esborra', es: 'Borrar', en: 'Clear' },
 
   // ── Alerts ──
   alert:           { ca: 'ALERTA',     es: 'ALERTA',      en: 'ALERT' },

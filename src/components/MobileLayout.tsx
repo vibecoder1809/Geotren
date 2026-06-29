@@ -59,21 +59,76 @@ interface MobileLayoutProps {
   onThemeToggle: () => void
 }
 
-// Sheet snap positions as % of viewport height from bottom
-const SNAP_PEEK  = 0.13  // handle + 1 train card peeking
-const SNAP_HALF  = 0.45  // half screen
-const SNAP_FULL  = 0.88  // almost full
+// ── Bottom-sheet drag ────────────────────────────────────────────────────
+// Sheet snap positions as a fraction of viewport height (from the bottom).
+const SNAP_PEEK = 0.16  // handle + tabs + one card peeking
+const SNAP_HALF = 0.48  // roughly half screen
+const SNAP_FULL = 0.9   // almost full
+const SNAPS = [SNAP_PEEK, SNAP_HALF, SNAP_FULL]
 
-function snapNearest(ratio: number): number {
-  const snaps = [SNAP_PEEK, SNAP_HALF, SNAP_FULL]
-  return snaps.reduce((a, b) => Math.abs(b - ratio) < Math.abs(a - ratio) ? b : a)
+// Velocity-aware snap: a fast flick jumps a step in its direction, otherwise we
+// settle to the nearest snap point. `velocity` is in ratio-units per second
+// (positive = expanding upward).
+function resolveSnap(ratio: number, velocity: number): number {
+  const FLICK = 0.6
+  const nearestIdx = SNAPS.reduce(
+    (best, _, i) => (Math.abs(SNAPS[i] - ratio) < Math.abs(SNAPS[best] - ratio) ? i : best),
+    0,
+  )
+  if (velocity > FLICK && nearestIdx < SNAPS.length - 1) return SNAPS[nearestIdx + 1]
+  if (velocity < -FLICK && nearestIdx > 0) return SNAPS[nearestIdx - 1]
+  return SNAPS[nearestIdx]
+}
+
+// Generic vertical drag tracker that binds move/end listeners to the window
+// (not the handle element), so a fast swipe never "loses" the pointer. Reports
+// the live drag delta in px and a velocity estimate on release.
+function useVerticalDrag(onMove: (deltaY: number) => void, onEnd: (deltaY: number, velocityPxPerS: number) => void) {
+  const state = useRef<{ startY: number; lastY: number; lastT: number; vel: number } | null>(null)
+
+  const begin = useCallback((clientY: number) => {
+    state.current = { startY: clientY, lastY: clientY, lastT: performance.now(), vel: 0 }
+  }, [])
+
+  useEffect(() => {
+    const move = (clientY: number) => {
+      const s = state.current
+      if (!s) return
+      const now = performance.now()
+      const dt = now - s.lastT
+      if (dt > 0) s.vel = (clientY - s.lastY) / dt * 1000 // px/s
+      s.lastY = clientY
+      s.lastT = now
+      onMove(clientY - s.startY)
+    }
+    const end = () => {
+      const s = state.current
+      if (!s) return
+      state.current = null
+      onEnd(s.lastY - s.startY, s.vel)
+    }
+    const mm = (e: MouseEvent) => move(e.clientY)
+    const tm = (e: TouchEvent) => { if (state.current) { e.preventDefault(); move(e.touches[0].clientY) } }
+    window.addEventListener('mousemove', mm)
+    window.addEventListener('mouseup', end)
+    window.addEventListener('touchmove', tm, { passive: false })
+    window.addEventListener('touchend', end)
+    return () => {
+      window.removeEventListener('mousemove', mm)
+      window.removeEventListener('mouseup', end)
+      window.removeEventListener('touchmove', tm)
+      window.removeEventListener('touchend', end)
+    }
+  }, [onMove, onEnd])
+
+  return begin
 }
 
 const ROTATION_MS   = 7_000
 const PREVIEW_COUNT = 5
 const EXPANDED_COUNT = 10
 
-function MobileAlertBanner({ alerts }: { alerts: Alert[] }) {
+function MobileAlertBanner({ alerts, top }: { alerts: Alert[]; top: number }) {
   const { t } = useI18n()
   const preview = alerts.slice(0, PREVIEW_COUNT)
   const [idx, setIdx]           = useState(0)
@@ -103,19 +158,22 @@ function MobileAlertBanner({ alerts }: { alerts: Alert[] }) {
     <div
       onClick={() => setExpanded(e => !e)}
       style={{
-        position: 'absolute', top: 48, left: 0, right: 0, zIndex: 20,
-        background: 'rgba(234,179,8,0.92)',
+        position: 'absolute', top, left: 10, right: 10, zIndex: 20,
+        background: 'rgba(234,179,8,0.95)',
         color: '#000',
+        borderRadius: 12,
+        boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
         cursor: 'pointer',
         userSelect: 'none',
+        backdropFilter: 'blur(8px)',
       }}
     >
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 6, padding: '5px 14px',
-        fontSize: 11, fontWeight: 600,
+        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px',
+        fontSize: 11.5, fontWeight: 600,
         opacity: fade ? 1 : 0, transition: 'opacity 0.25s',
       }}>
-        <span style={{ fontWeight: 700, flexShrink: 0 }}>{t('alert')}</span>
+        <span style={{ fontWeight: 800, flexShrink: 0, fontSize: 10, letterSpacing: '0.5px' }}>⚠ {t('alert')}</span>
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{visible?.header}</span>
         {preview.length > 1 && (
           <span style={{ fontSize: 10, flexShrink: 0, opacity: 0.7 }}>
@@ -124,11 +182,11 @@ function MobileAlertBanner({ alerts }: { alerts: Alert[] }) {
         )}
       </div>
       {expanded && (
-        <div style={{ borderTop: '1px solid rgba(0,0,0,0.15)', padding: '4px 14px 8px', maxHeight: 220, overflowY: 'auto' }}>
+        <div style={{ borderTop: '1px solid rgba(0,0,0,0.15)', padding: '4px 14px 10px', maxHeight: 220, overflowY: 'auto' }}>
           {alerts.slice(0, EXPANDED_COUNT).map((a, i) => (
             <div key={i} style={{
-              padding: '4px 0',
-              borderBottom: i < Math.min(alerts.length, EXPANDED_COUNT) - 1 ? '1px solid rgba(0,0,0,0.1)' : 'none',
+              padding: '5px 0',
+              borderBottom: i < Math.min(alerts.length, EXPANDED_COUNT) - 1 ? '1px solid rgba(0,0,0,0.12)' : 'none',
               fontSize: 11, lineHeight: 1.4,
             }}>
               <span style={{ fontWeight: 700 }}>{a.header}</span>
@@ -140,6 +198,72 @@ function MobileAlertBanner({ alerts }: { alerts: Alert[] }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ── Swipe-down-to-dismiss detail sheet (train / stop) ────────────────────
+function DetailSheet({ open, onClose, maxHeight, children }: {
+  open: boolean
+  onClose: () => void
+  maxHeight: string
+  children: React.ReactNode
+}) {
+  // Live drag offset (px) while the user pulls the sheet down.
+  const [drag, setDrag] = useState(0)
+
+  const handleMove = useCallback((deltaY: number) => {
+    setDrag(Math.max(0, deltaY)) // only allow pulling downward
+  }, [])
+
+  const handleEnd = useCallback((deltaY: number, velocity: number) => {
+    // Dismiss on a decent pull or a downward flick; otherwise spring back.
+    if (deltaY > 110 || velocity > 650) onClose()
+    setDrag(0)
+  }, [onClose])
+
+  const beginDrag = useVerticalDrag(handleMove, handleEnd)
+
+  // Reset any residual drag offset when reopened.
+  useEffect(() => { if (open) setDrag(0) }, [open])
+
+  return (
+    <>
+      {/* Scrim */}
+      <div
+        onClick={onClose}
+        style={{
+          position: 'absolute', inset: 0, zIndex: 25,
+          background: 'rgba(0,0,0,0.5)',
+          opacity: open ? 1 : 0,
+          pointerEvents: open ? 'auto' : 'none',
+          transition: 'opacity 0.3s',
+        }}
+      />
+      {/* Sheet */}
+      <div style={{
+        position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 30,
+        maxHeight, overflowY: 'auto',
+        background: 'var(--bg2)',
+        borderRadius: '20px 20px 0 0',
+        boxShadow: '0 -8px 40px rgba(0,0,0,0.55)',
+        transform: open ? `translateY(${drag}px)` : 'translateY(100%)',
+        transition: drag > 0 ? 'none' : 'transform 0.36s cubic-bezier(0.32,1.4,0.5,1)',
+        pointerEvents: open ? 'auto' : 'none',
+        willChange: 'transform',
+        overscrollBehavior: 'contain',
+      }}>
+        {/* Grabbable handle row — drag down to dismiss, tap to close */}
+        <div
+          style={{ padding: '12px 0 6px', cursor: 'grab', touchAction: 'none', userSelect: 'none' }}
+          onMouseDown={e => beginDrag(e.clientY)}
+          onTouchStart={e => beginDrag(e.touches[0].clientY)}
+          onClick={onClose}
+        >
+          <div style={{ width: 40, height: 4, borderRadius: 2, background: 'var(--border2)', margin: '0 auto' }} />
+        </div>
+        {children}
+      </div>
+    </>
   )
 }
 
@@ -163,7 +287,8 @@ export function MobileLayout({
   )
   const [stationQuery, setStationQuery] = useState('')
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-  const dragStart = useRef<{ y: number; ratio: number } | null>(null)
+  // The sheet height the current drag started from (so deltas are absolute).
+  const dragBase = useRef(SNAP_PEEK)
 
   const relativeTime = useRelativeTime(lastUpdate)
 
@@ -194,83 +319,99 @@ export function MobileLayout({
       ).slice(0, 12)
     : []
 
-  // Drag handlers for the sheet handle
-  const onDragStart = useCallback((clientY: number) => {
-    dragStart.current = { y: clientY, ratio: sheetRatio }
-  }, [sheetRatio])
-
-  const onDragMove = useCallback((clientY: number) => {
-    if (!dragStart.current) return
+  // ── Sheet drag (handle + tab row are both grab targets) ──
+  const onSheetMove = useCallback((deltaY: number) => {
     const vh = window.innerHeight
-    const delta = (dragStart.current.y - clientY) / vh
-    const next = Math.max(SNAP_PEEK - 0.02, Math.min(SNAP_FULL + 0.02, dragStart.current.ratio + delta))
+    // Dragging up (negative deltaY) raises the sheet.
+    const next = Math.max(SNAP_PEEK - 0.03, Math.min(SNAP_FULL + 0.03, dragBase.current - deltaY / vh))
     setSheetRatio(next)
   }, [])
 
-  const onDragEnd = useCallback(() => {
-    if (!dragStart.current) return
-    setSheetRatio(snapNearest(sheetRatio))
-    dragStart.current = null
-  }, [sheetRatio])
+  const onSheetEnd = useCallback((deltaY: number, velocityPxPerS: number) => {
+    const vh = window.innerHeight
+    const ratioVel = -velocityPxPerS / vh // up = positive (expanding)
+    const landed = dragBase.current - deltaY / vh
+    setSheetRatio(resolveSnap(landed, ratioVel))
+  }, [])
 
-  const sheetHeight = `${Math.round(sheetRatio * 100)}vh`
+  const beginSheetDrag = useVerticalDrag(onSheetMove, onSheetEnd)
+  const startSheetDrag = useCallback((clientY: number) => {
+    dragBase.current = sheetRatio
+    beginSheetDrag(clientY)
+  }, [sheetRatio, beginSheetDrag])
+
+  const expandSheet = useCallback(() => {
+    setSheetRatio(r => (r < SNAP_HALF ? SNAP_HALF : r))
+  }, [])
+
+  const sheetHeight = `${(sheetRatio * 100).toFixed(2)}vh`
+
+  const TABS = [
+    { key: 'trains'   as const, label: `${t('tabTrains')}` },
+    { key: 'stations' as const, label: t('tabStations') },
+    { key: 'plan'     as const, label: t('tabPlan') },
+  ]
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
 
-      {/* Compact top bar */}
+      {/* ── Floating top bar ── */}
       <div style={{
         position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20,
-        display: 'flex', alignItems: 'center', gap: 10,
-        padding: '10px 14px',
-        background: 'linear-gradient(to bottom, var(--bg) 60%, transparent)',
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '12px 12px 18px',
+        background: 'linear-gradient(to bottom, var(--bg) 45%, transparent)',
         pointerEvents: 'none',
       }}>
-        <div style={{ pointerEvents: 'auto', fontFamily: 'var(--font-space-grotesk), sans-serif', fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block', animation: 'pulse-dot 2s infinite' }} />
-          Geotren
+        <div style={{
+          pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 7,
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          padding: '6px 12px 6px 10px', borderRadius: 22,
+          boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
+        }}>
+          <img src="/logo.svg" alt="" style={{ width: 22, height: 22, borderRadius: 5 }} />
+          <span style={{ fontFamily: 'var(--font-space-grotesk), sans-serif', fontSize: 15, fontWeight: 700 }}>Geotren</span>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', display: 'inline-block', marginLeft: 1, animation: 'pulse-dot 1.6s infinite' }} />
         </div>
 
-        <div style={{ pointerEvents: 'auto', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'var(--green)', fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--green)', display: 'inline-block', animation: 'pulse-dot 1.5s infinite' }} />
-          {t('live')}
-        </div>
-
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, pointerEvents: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 7, pointerEvents: 'auto' }}>
           <LanguagePicker compact />
           <button
             onClick={onThemeToggle}
-            style={{ background: 'var(--bg2)', border: '1px solid var(--border2)', color: 'var(--muted)', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}
+            aria-label={t('theme')}
+            style={{ background: 'var(--bg2)', border: '1px solid var(--border)', color: 'var(--muted)', width: 38, height: 38, borderRadius: 12, cursor: 'pointer', fontSize: 15, fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.2)' }}
           >
-            {t('theme')}
+            {theme === 'dark' ? '☀' : '☾'}
           </button>
           <button
             onClick={onRefresh}
             disabled={refreshing}
-            style={{ background: 'var(--bg2)', border: '1px solid var(--border2)', color: refreshing ? 'var(--accent)' : 'var(--muted)', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}
+            aria-label={t('refresh')}
+            style={{ background: 'var(--bg2)', border: '1px solid var(--border)', color: refreshing ? 'var(--accent)' : 'var(--muted)', height: 38, padding: '0 12px', borderRadius: 12, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5, boxShadow: '0 2px 10px rgba(0,0,0,0.2)' }}
           >
-            {refreshing ? '…' : relativeTime}
+            <span style={{ display: 'inline-block', fontSize: 13, animation: refreshing ? 'spin 0.8s linear infinite' : 'none' }}>↻</span>
+            {!refreshing && <span style={{ fontVariantNumeric: 'tabular-nums' }}>{relativeTime}</span>}
           </button>
         </div>
       </div>
 
-      {/* Alert banner */}
+      {/* ── Alert / error banner ── */}
       {apiError && (
         <div style={{
-          position: 'absolute', top: 48, left: 0, right: 0, zIndex: 20,
-          background: 'rgba(239,68,68,0.9)',
-          color: '#fff', fontSize: 11, fontWeight: 600, padding: '5px 14px',
-          display: 'flex', alignItems: 'center', gap: 6,
+          position: 'absolute', top: 58, left: 10, right: 10, zIndex: 20,
+          background: 'rgba(239,68,68,0.95)', borderRadius: 12,
+          color: '#fff', fontSize: 11.5, fontWeight: 600, padding: '8px 14px',
+          display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
         }}>
-          <span style={{ fontWeight: 700 }}>ERROR</span>
+          <span style={{ fontWeight: 800, fontSize: 10 }}>ERROR</span>
           {apiError}
         </div>
       )}
       {!apiError && alerts.length > 0 && (
-        <MobileAlertBanner alerts={alerts} />
+        <MobileAlertBanner alerts={alerts} top={58} />
       )}
 
-      {/* Full-screen map */}
+      {/* ── Full-screen map ── */}
       <div style={{ flex: 1, position: 'relative' }}>
         <MapView
           trains={filteredTrains}
@@ -287,101 +428,111 @@ export function MobileLayout({
         />
       </div>
 
-      {/* Bottom sheet */}
+      {/* ── Bottom sheet ── */}
       <div
         style={{
           position: 'absolute',
           left: 0, right: 0, bottom: 0,
           height: sheetHeight,
           background: 'var(--bg2)',
-          borderRadius: '18px 18px 0 0',
-          boxShadow: '0 -4px 30px rgba(0,0,0,0.4)',
+          borderRadius: '20px 20px 0 0',
+          boxShadow: '0 -6px 34px rgba(0,0,0,0.4)',
+          border: '1px solid var(--border)',
+          borderBottom: 'none',
           display: 'flex',
           flexDirection: 'column',
           zIndex: 10,
-          transition: dragStart.current ? 'none' : 'height 0.3s cubic-bezier(0.34,1.56,0.64,1)',
+          transition: 'height 0.32s cubic-bezier(0.32,1.2,0.5,1)',
           willChange: 'height',
         }}
       >
-        {/* Drag handle */}
+        {/* Grab zone: handle + segmented tabs both initiate a drag */}
         <div
-          style={{ padding: '10px 0 4px', flexShrink: 0, cursor: 'grab', touchAction: 'none', userSelect: 'none' }}
-          onMouseDown={e => onDragStart(e.clientY)}
-          onMouseMove={e => { if (dragStart.current) onDragMove(e.clientY) }}
-          onMouseUp={onDragEnd}
-          onMouseLeave={onDragEnd}
-          onTouchStart={e => onDragStart(e.touches[0].clientY)}
-          onTouchMove={e => { e.preventDefault(); onDragMove(e.touches[0].clientY) }}
-          onTouchEnd={onDragEnd}
+          style={{ flexShrink: 0, touchAction: 'none', cursor: 'grab', paddingTop: 8 }}
+          onMouseDown={e => startSheetDrag(e.clientY)}
+          onTouchStart={e => startSheetDrag(e.touches[0].clientY)}
         >
-          <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border2)', margin: '0 auto' }} />
-        </div>
+          <div style={{ width: 40, height: 4, borderRadius: 2, background: 'var(--border2)', margin: '0 auto 8px' }} />
 
-        {/* Tabs */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          {(['trains', 'stations', 'plan'] as const).map(tab => (
-            <button
-              key={tab}
-              onClick={() => { setActiveTab(tab); if (sheetRatio < SNAP_HALF) setSheetRatio(SNAP_HALF); if (tab === 'trains') setStationQuery('') }}
-              style={{
-                flex: 1, padding: '10px 0', border: 'none', background: 'none',
-                color: activeTab === tab ? 'var(--accent)' : 'var(--muted)',
-                fontWeight: 600, fontSize: 12, cursor: 'pointer',
-                borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
-                textTransform: 'uppercase', letterSpacing: '0.5px', fontFamily: 'inherit',
-              }}
-            >
-              {tab === 'trains' ? `${t('tabTrains')} (${filteredTrains.length})` : tab === 'stations' ? t('tabStations') : t('tabPlan')}
-            </button>
-          ))}
-        </div>
-
-        {/* Line filter — grouped by family (hidden on the planner tab) */}
-        {activeTab !== 'plan' && <div style={{ padding: '6px 14px 4px', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
-          {/* "All" pill + group header pills on one scrollable row */}
-          <div style={{ overflowX: 'auto', display: 'flex', gap: 6, paddingBottom: 6, scrollbarWidth: 'none' }}>
-            <span
-              onClick={() => onToggleLine('ALL')}
-              style={{ flexShrink: 0, padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${activeLines.has('ALL') ? 'var(--text)' : 'transparent'}`, background: 'var(--bg3)', color: 'var(--text)', opacity: activeLines.has('ALL') ? 1 : 0.5, fontFamily: 'var(--font-space-grotesk), sans-serif' }}
-            >
-              {t('all')}
-            </span>
-            {lineGroups.map(g => {
-              const expanded = expandedGroups.has(g.key)
-              const anyActive = !activeLines.has('ALL') && g.members.some(l => activeLines.has(l))
+          {/* Segmented tab control */}
+          <div style={{ display: 'flex', gap: 4, margin: '0 12px 8px', padding: 3, background: 'var(--bg3)', borderRadius: 12 }}>
+            {TABS.map(tab => {
+              const active = activeTab === tab.key
               return (
-                <span
-                  key={g.key}
-                  onClick={() => toggleGroup(g.key)}
-                  style={{ flexShrink: 0, padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${anyActive ? 'var(--accent)' : expanded ? 'var(--border2)' : 'transparent'}`, background: anyActive ? 'rgba(99,102,241,0.12)' : 'var(--bg3)', color: anyActive ? 'var(--accent)' : 'var(--muted)', fontFamily: 'var(--font-space-grotesk), sans-serif' }}
+                <button
+                  key={tab.key}
+                  // Don't start a drag from the tap that switches tabs.
+                  onMouseDown={e => e.stopPropagation()}
+                  onTouchStart={e => e.stopPropagation()}
+                  onClick={() => { setActiveTab(tab.key); expandSheet(); if (tab.key === 'trains') setStationQuery('') }}
+                  style={{
+                    flex: 1, padding: '8px 0', border: 'none', borderRadius: 9, cursor: 'pointer',
+                    background: active ? 'var(--accent)' : 'transparent',
+                    color: active ? '#fff' : 'var(--muted)',
+                    fontWeight: 700, fontSize: 12, fontFamily: 'inherit',
+                    letterSpacing: '0.2px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                    transition: 'background 0.15s, color 0.15s',
+                  }}
                 >
-                  {t(g.labelKey)} {expanded ? '▲' : '▼'}
-                </span>
+                  {tab.label}
+                  {tab.key === 'trains' && (
+                    <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.85, background: active ? 'rgba(255,255,255,0.22)' : 'var(--bg2)', padding: '1px 6px', borderRadius: 8 }}>
+                      {filteredTrains.length}
+                    </span>
+                  )}
+                </button>
               )
             })}
           </div>
-          {/* Expanded group lines */}
-          {lineGroups.filter(g => expandedGroups.has(g.key)).map(g => (
-            <div key={g.key} style={{ display: 'flex', flexWrap: 'wrap', gap: 5, paddingBottom: 6 }}>
-              {g.members.map(l => {
-                const active = activeLines.has(l)
-                const color = lineColors[l] || LINE_COLORS[l] || '#7a82a0'
+        </div>
+
+        {/* Line filter — grouped by family (hidden on the planner tab) */}
+        {activeTab !== 'plan' && (
+          <div style={{ padding: '2px 12px 6px', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+            <div style={{ overflowX: 'auto', display: 'flex', gap: 6, paddingBottom: expandedGroups.size ? 6 : 0, scrollbarWidth: 'none' }}>
+              <span
+                onClick={() => onToggleLine('ALL')}
+                style={{ flexShrink: 0, padding: '5px 13px', borderRadius: 20, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: `1.5px solid ${activeLines.has('ALL') ? 'var(--text)' : 'transparent'}`, background: 'var(--bg3)', color: 'var(--text)', opacity: activeLines.has('ALL') ? 1 : 0.5, fontFamily: 'var(--font-space-grotesk), sans-serif' }}
+              >
+                {t('all')}
+              </span>
+              {lineGroups.map(g => {
+                const expanded = expandedGroups.has(g.key)
+                const anyActive = !activeLines.has('ALL') && g.members.some(l => activeLines.has(l))
                 return (
                   <span
-                    key={l}
-                    onClick={() => onToggleLine(l)}
-                    style={{ padding: '3px 9px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${active ? color : 'transparent'}`, background: `${color}20`, color, opacity: active ? 1 : 0.5, fontFamily: 'var(--font-space-grotesk), sans-serif' }}
+                    key={g.key}
+                    onClick={() => toggleGroup(g.key)}
+                    style={{ flexShrink: 0, padding: '5px 11px', borderRadius: 20, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: `1.5px solid ${anyActive ? 'var(--accent)' : expanded ? 'var(--border2)' : 'transparent'}`, background: anyActive ? 'rgba(59,130,246,0.14)' : 'var(--bg3)', color: anyActive ? 'var(--accent)' : 'var(--muted)', fontFamily: 'var(--font-space-grotesk), sans-serif' }}
                   >
-                    {l}
+                    {t(g.labelKey)} {expanded ? '▲' : '▼'}
                   </span>
                 )
               })}
             </div>
-          ))}
-        </div>}
+            {lineGroups.filter(g => expandedGroups.has(g.key)).map(g => (
+              <div key={g.key} style={{ display: 'flex', flexWrap: 'wrap', gap: 5, paddingTop: 2, paddingBottom: 4 }}>
+                {g.members.map(l => {
+                  const active = activeLines.has(l)
+                  const color = lineColors[l] || LINE_COLORS[l] || '#7a82a0'
+                  return (
+                    <span
+                      key={l}
+                      onClick={() => onToggleLine(l)}
+                      style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: `1.5px solid ${active ? color : 'transparent'}`, background: `${color}20`, color, opacity: active ? 1 : 0.5, fontFamily: 'var(--font-space-grotesk), sans-serif' }}
+                    >
+                      {l}
+                    </span>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Scrollable content */}
-        <div style={{ flex: 1, overflowY: activeTab === 'plan' ? 'hidden' : 'auto', display: activeTab === 'plan' ? 'flex' : 'block', flexDirection: 'column', padding: activeTab === 'plan' ? 0 : '0 10px 24px' }}>
+        <div style={{ flex: 1, overflowY: activeTab === 'plan' ? 'hidden' : 'auto', display: activeTab === 'plan' ? 'flex' : 'block', flexDirection: 'column', padding: activeTab === 'plan' ? 0 : '8px 12px 28px', overscrollBehavior: 'contain' }}>
           {activeTab === 'plan' ? (
             <TripPlanner
               lineColors={lineColors}
@@ -401,69 +552,44 @@ export function MobileLayout({
                   />
                 ))
           ) : (
-            <div style={{ paddingTop: 4 }}>
+            <div>
               <input
                 type="text"
                 value={stationQuery}
                 onChange={e => setStationQuery(e.target.value)}
                 placeholder={t('searchStationShort')}
-                style={{ width: '100%', padding: '10px 12px', background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8, color: 'var(--text)', fontFamily: 'inherit', fontSize: 13, outline: 'none', marginBottom: 8 }}
+                style={{ width: '100%', padding: '11px 13px', background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 10, color: 'var(--text)', fontFamily: 'inherit', fontSize: 14, outline: 'none', marginBottom: 8 }}
               />
               {filteredStops.map(s => (
                 <div
                   key={s.stopId}
                   onClick={() => { onSelectStop(s); setStationQuery(s.name); setSheetRatio(SNAP_PEEK) }}
-                  style={{ padding: '10px 12px', borderRadius: 8, marginBottom: 4, cursor: 'pointer', background: 'var(--bg3)', fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  style={{ padding: '12px 13px', borderRadius: 10, marginBottom: 5, cursor: 'pointer', background: 'var(--bg3)', fontSize: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                 >
                   <span>{s.name}</span>
-                  {s.wheelchairBoarding && <span style={{ fontSize: 12, color: 'var(--accent)' }}>♿</span>}
+                  {s.wheelchairBoarding && <span style={{ fontSize: 13, color: 'var(--accent)' }}>♿</span>}
                 </div>
               ))}
               {stationQuery && filteredStops.length === 0 && (
-                <p style={{ color: 'var(--muted)', fontSize: 12, padding: '8px 0' }}>{t('noStationFound')}</p>
+                <p style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 2px' }}>{t('noStationFound')}</p>
               )}
               {!stationQuery && (
-                <p style={{ color: 'var(--muted)', fontSize: 12, padding: '8px 0' }}>{t('typeStationName')}</p>
+                <p style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 2px' }}>{t('typeStationName')}</p>
               )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Train detail — slides up from bottom */}
-      <div style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 30,
-        maxHeight: '85vh', overflowY: 'auto',
-        background: 'var(--bg2)',
-        borderRadius: '18px 18px 0 0',
-        boxShadow: '0 -4px 30px rgba(0,0,0,0.5)',
-        transform: selectedTrain ? 'translateY(0)' : 'translateY(100%)',
-        transition: 'transform 0.35s cubic-bezier(0.34,1.56,0.64,1)',
-        pointerEvents: selectedTrain ? 'auto' : 'none',
-      }}>
-        {/* Drag-down to close hint */}
-        <div style={{ padding: '10px 0 0', cursor: 'pointer' }} onClick={onCloseTrain}>
-          <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border2)', margin: '0 auto' }} />
-        </div>
-        <DetailPanel train={selectedTrain} lineColors={lineColors} onClose={onCloseTrain} />
-      </div>
+      {/* ── Train detail ── */}
+      <DetailSheet open={selectedTrain !== null} onClose={onCloseTrain} maxHeight="86vh">
+        <DetailPanel train={selectedTrain} lineColors={lineColors} onClose={onCloseTrain} mobile />
+      </DetailSheet>
 
-      {/* Stop detail — slides up from bottom */}
-      <div style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 30,
-        maxHeight: '75vh', overflowY: 'auto',
-        background: 'var(--bg2)',
-        borderRadius: '18px 18px 0 0',
-        boxShadow: '0 -4px 30px rgba(0,0,0,0.5)',
-        transform: selectedStop ? 'translateY(0)' : 'translateY(100%)',
-        transition: 'transform 0.35s cubic-bezier(0.34,1.56,0.64,1)',
-        pointerEvents: selectedStop ? 'auto' : 'none',
-      }}>
-        <div style={{ padding: '10px 0 0', cursor: 'pointer' }} onClick={onCloseStop}>
-          <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border2)', margin: '0 auto' }} />
-        </div>
-        <StopPanel stop={selectedStop} onClose={onCloseStop} mobile />
-      </div>
+      {/* ── Stop detail ── */}
+      <DetailSheet open={selectedStop !== null && selectedTrain === null} onClose={onCloseStop} maxHeight="80vh">
+        <StopPanel stop={selectedStop} onClose={onCloseStop} lineColors={lineColors} mobile />
+      </DetailSheet>
     </div>
   )
 }

@@ -1,6 +1,5 @@
 import { planJourneys, MAX_PLAN_DAYS_AHEAD } from '@/lib/planner'
-import { fetchTrains } from '@/lib/geotren'
-import { fetchTripDelays } from '@/lib/gtfs'
+import { fetchLineDelays } from '@/lib/gtfs'
 
 function parseAfter(raw: string | null): number {
   // Accepts "HH:MM"; defaults to current local time.
@@ -37,30 +36,6 @@ function parseDate(raw: string | null): string | null {
   return iso === localISO(today) ? null : iso
 }
 
-// Median live delay (minutes) per line, from current train positions.
-async function liveLineDelays(): Promise<Map<string, number>> {
-  const result = new Map<string, number>()
-  try {
-    const [trains, delays] = await Promise.all([fetchTrains(), fetchTripDelays()])
-    const byLine = new Map<string, number[]>()
-    for (const t of trains) {
-      const d = delays.get(t.id)
-      if (d == null) continue
-      const list = byLine.get(t.line)
-      if (list) list.push(d)
-      else byLine.set(t.line, [d])
-    }
-    for (const [line, list] of byLine) {
-      list.sort((a, b) => a - b)
-      const mid = list[Math.floor(list.length / 2)]
-      if (mid > 0) result.set(line, mid)
-    }
-  } catch (err) {
-    console.error('Live delay enrichment failed:', err)
-  }
-  return result
-}
-
 export async function GET(req: Request) {
   const url = new URL(req.url)
   const from = url.searchParams.get('from')
@@ -78,7 +53,7 @@ export async function GET(req: Request) {
   try {
     // Live delays only make sense for today's plan; skip the enrichment (and
     // its network cost) when planning a future date.
-    const lineDelays = date ? undefined : await liveLineDelays()
+    const lineDelays = date ? undefined : await fetchLineDelays()
     const journeys = await planJourneys(from, to, after, 4, lineDelays, date ?? undefined)
     return Response.json({ journeys })
   } catch (err) {

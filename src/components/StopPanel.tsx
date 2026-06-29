@@ -3,10 +3,12 @@
 import { useEffect, useState } from 'react'
 import type { Stop, StopDetail } from '@/types'
 import { useI18n, type TransKey } from '@/lib/i18n'
+import { DeparturesBoard } from './DeparturesBoard'
 
 interface StopPanelProps {
   stop: Stop | null
   onClose: () => void
+  lineColors?: Record<string, string>
   mobile?: boolean
 }
 
@@ -39,12 +41,13 @@ function Metric({ label, value, unit }: { label: string; value: number | null; u
   )
 }
 
-function StopContent({ stop, detail, loading, onClose, showCloseButton }: {
+function StopContent({ stop, detail, loading, onClose, showCloseButton, lineColors }: {
   stop: Stop
   detail: StopDetail | null
   loading: boolean
   onClose: () => void
   showCloseButton: boolean
+  lineColors: Record<string, string>
 }) {
   const { t } = useI18n()
   const air     = detail?.air ?? null
@@ -72,6 +75,10 @@ function StopContent({ stop, detail, loading, onClose, showCloseButton }: {
         <span>{stop.stopId}</span>
         {stop.wheelchairBoarding && <span style={{ color: 'var(--accent)' }}>♿ {t('accessible')}</span>}
       </div>
+
+      {/* Live next-departures board (timetable + current line delays). The parent
+          station code is the stop id without its trailing platform digits. */}
+      <DeparturesBoard stationCode={stop.stopId.replace(/\d+$/, '')} lineColors={lineColors} />
 
       {loading && (
         <div style={{ fontSize: 12, color: 'var(--muted)', padding: '8px 0' }}>{t('loadingData')}</div>
@@ -120,7 +127,7 @@ function StopContent({ stop, detail, loading, onClose, showCloseButton }: {
   )
 }
 
-export function StopPanel({ stop, onClose, mobile = false }: StopPanelProps) {
+export function StopPanel({ stop, onClose, lineColors = {}, mobile = false }: StopPanelProps) {
   const [detail, setDetail] = useState<StopDetail | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -139,7 +146,7 @@ export function StopPanel({ stop, onClose, mobile = false }: StopPanelProps) {
   if (mobile) {
     return (
       <div style={{ padding: '0 20px 20px' }}>
-        {stop && <StopContent stop={stop} detail={detail} loading={loading} onClose={onClose} showCloseButton={false} />}
+        {stop && <StopContent stop={stop} detail={detail} loading={loading} onClose={onClose} showCloseButton={false} lineColors={lineColors} />}
       </div>
     )
   }
@@ -164,7 +171,7 @@ export function StopPanel({ stop, onClose, mobile = false }: StopPanelProps) {
       boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
       pointerEvents: open ? 'auto' : 'none',
     }}>
-      {stop && <StopContent stop={stop} detail={detail} loading={loading} onClose={onClose} showCloseButton />}
+      {stop && <StopContent stop={stop} detail={detail} loading={loading} onClose={onClose} showCloseButton lineColors={lineColors} />}
     </div>
   )
 }

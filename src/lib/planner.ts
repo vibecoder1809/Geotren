@@ -348,6 +348,38 @@ export async function getStations(): Promise<PlannerStation[]> {
     .sort((a, b) => a.name.localeCompare(b.name, 'ca'))
 }
 
+// ---- public: station departures board -----------------------------------
+
+export interface Departure {
+  line: string
+  headsign: string   // trip destination shown on the board
+  depTime: number    // scheduled seconds since midnight
+  tripId: number
+}
+
+// The next scheduled departures leaving `stationCode` at or after
+// `afterSeconds`. A trip departs a station via exactly one connection whose
+// `fromParent` is that station, and the connection list is already sorted by
+// departure time, so we just take the first `count` such connections.
+export async function getDepartures(
+  stationCode: string,
+  afterSeconds: number,
+  count = 8,
+  date?: string,
+): Promise<Departure[]> {
+  const data = await getTimetable(date)
+  if (!data.stationNames.has(stationCode)) return []
+
+  const out: Departure[] = []
+  for (const c of data.connections) {
+    if (c.depTime < afterSeconds) continue
+    if (c.fromParent !== stationCode) continue
+    out.push({ line: c.line, headsign: c.headsign, depTime: c.depTime, tripId: c.tripId })
+    if (out.length >= count) break
+  }
+  return out
+}
+
 // ---- public: journey planning (CSA) -------------------------------------
 
 export interface JourneyLeg {
