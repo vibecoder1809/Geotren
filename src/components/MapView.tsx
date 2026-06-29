@@ -149,10 +149,12 @@ export default function MapView({ trains, stops, routes, lineColors, selectedTra
       {/* Journey path — drawn above base routes, below stops/trains */}
       {journeyPath && journeyGeoJson.features.length > 0 && (
         <Source id="journey" type="geojson" data={journeyGeoJson}>
-          {/* White casing for contrast against the basemap */}
+          {/* White casing for contrast against the basemap — inserted before the
+              stop circles so stops always render on top of the journey line. */}
           <Layer
             id="journey-casing"
             type="line"
+            beforeId="stops-circles"
             layout={{ 'line-join': 'round', 'line-cap': 'round' }}
             paint={{
               'line-color': theme === 'dark' ? '#000' : '#fff',
@@ -164,6 +166,7 @@ export default function MapView({ trains, stops, routes, lineColors, selectedTra
           <Layer
             id="journey-line"
             type="line"
+            beforeId="stops-circles"
             layout={{ 'line-join': 'round', 'line-cap': 'round' }}
             paint={{
               'line-color': ['get', 'color'],
