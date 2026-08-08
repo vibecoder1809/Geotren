@@ -9,8 +9,15 @@ export function ServiceWorkerRegister() {
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') return
     if (!('serviceWorker' in navigator)) return
-    const onLoad = () => navigator.serviceWorker.register('/sw.js').catch(() => {})
-    window.addEventListener('load', onLoad)
+    const onLoad = () => { navigator.serviceWorker.register('/sw.js').catch(() => {}) }
+    // Hydration normally finishes *after* window.load has already fired, and a
+    // listener added at that point never runs — which left the SW permanently
+    // unregistered. Only wait for the event if the page is still loading.
+    if (document.readyState === 'complete') {
+      onLoad()
+      return
+    }
+    window.addEventListener('load', onLoad, { once: true })
     return () => window.removeEventListener('load', onLoad)
   }, [])
   return null
