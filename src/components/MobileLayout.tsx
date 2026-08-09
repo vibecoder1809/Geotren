@@ -70,16 +70,63 @@ const SNAPS = [SNAP_PEEK, SNAP_HALF, SNAP_FULL]
 
 // Velocity-aware snap: a fast flick jumps a step in its direction, otherwise we
 // settle to the nearest snap point. `velocity` is in ratio-units per second
-// (positive = expanding upward).
-function resolveSnap(ratio: number, velocity: number): number {
+// (positive = expanding upward); `max` is the ceiling from `useSheetCeiling`.
+function resolveSnap(ratio: number, velocity: number, max: number): number {
   const FLICK = 0.6
-  const nearestIdx = SNAPS.reduce(
-    (best, _, i) => (Math.abs(SNAPS[i] - ratio) < Math.abs(SNAPS[best] - ratio) ? i : best),
+  const snaps = SNAPS.map(s => Math.min(s, max))
+  const nearestIdx = snaps.reduce(
+    (best, _, i) => (Math.abs(snaps[i] - ratio) < Math.abs(snaps[best] - ratio) ? i : best),
     0,
   )
-  if (velocity > FLICK && nearestIdx < SNAPS.length - 1) return SNAPS[nearestIdx + 1]
-  if (velocity < -FLICK && nearestIdx > 0) return SNAPS[nearestIdx - 1]
-  return SNAPS[nearestIdx]
+  if (velocity > FLICK && nearestIdx < snaps.length - 1) return snaps[nearestIdx + 1]
+  if (velocity < -FLICK && nearestIdx > 0) return snaps[nearestIdx - 1]
+  return snaps[nearestIdx]
+}
+
+// ── Sheet ceiling ────────────────────────────────────────────────────────
+// The floating top bar is painted *over* the sheets (zIndex 35 vs 10), so a
+// sheet tall enough to reach it tucks its own grab handle behind the pills —
+// and the pills swallow the touch, so the sheet can't be dragged back down.
+// How far down the bar reaches depends on the notch inset, so measure it
+// instead of guessing a snap fraction, and cap every sheet just below it.
+const SHEET_TOP_GAP = 10
+
+function useSheetCeiling(
+  rootRef: React.RefObject<HTMLDivElement | null>,
+  barRef: React.RefObject<HTMLDivElement | null>,
+): number {
+  const [ceiling, setCeiling] = useState(SNAP_FULL)
+
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    const bar = barRef.current
+    if (!root || !bar) return
+
+    const measure = () => {
+      const vh = root.clientHeight
+      if (!vh) return
+      const rootTop = root.getBoundingClientRect().top
+      // Only the bar's pills are opaque and clickable — its own bottom padding
+      // is a transparent gradient tail the sheet may safely slide under.
+      const pillsBottom = Array.from(bar.children).reduce(
+        (bottom, el) => Math.max(bottom, el.getBoundingClientRect().bottom - rootTop),
+        0,
+      )
+      setCeiling(Math.max(SNAP_HALF, Math.min(SNAP_FULL, 1 - (pillsBottom + SHEET_TOP_GAP) / vh)))
+    }
+
+    measure()
+    // The bar grows with the safe-area inset on rotation, and the root resizes
+    // whenever mobile browser chrome (URL bar) slides in or out. Watch the
+    // *border* box: the inset lands on the bar's padding, which leaves its
+    // content box (and so a default ResizeObserver) completely unmoved.
+    const ro = new ResizeObserver(measure)
+    ro.observe(root, { box: 'border-box' })
+    ro.observe(bar, { box: 'border-box' })
+    return () => ro.disconnect()
+  }, [rootRef, barRef])
+
+  return ceiling
 }
 
 // Generic vertical drag tracker that binds move/end listeners to the window
@@ -211,13 +258,15 @@ function MobileAlertBanner({ alerts, top }: { alerts: Alert[]; top: string }) {
 // Opens at a peek height so the map stays visible and interactive behind it;
 // dragging the handle up expands it toward `full`, and only that expansion
 // dims the map. Drag down to fall back to the peek or dismiss.
-function DetailSheet({ open, onClose, peek = 0.28, full = 0.86, children }: {
+function DetailSheet({ open, onClose, peek = 0.28, full: fullSnap = 0.86, max = 1, children }: {
   open: boolean
   onClose: () => void
   peek?: number   // opening snap, as a fraction of the container height
   full?: number   // expanded snap
+  max?: number    // hard ceiling — keeps the handle clear of the top bar
   children: React.ReactNode
 }) {
+  const full = Math.min(fullSnap, max)
   const [ratio, setRatio]       = useState(peek)
   const [dragging, setDragging] = useState(false)
   const sheetRef                = useRef<HTMLDivElement>(null)
@@ -230,9 +279,10 @@ function DetailSheet({ open, onClose, peek = 0.28, full = 0.86, children }: {
   const viewH = () => sheetRef.current?.parentElement?.clientHeight || window.innerHeight
 
   const handleMove = useCallback((deltaY: number) => {
-    // Dragging up (negative deltaY) raises the sheet.
-    setRatio(Math.max(0.05, Math.min(full + 0.03, dragBase.current - deltaY / viewH())))
-  }, [full])
+    // Dragging up (negative deltaY) raises the sheet. A little overshoot past
+    // `full` is allowed, but never past the ceiling.
+    setRatio(Math.max(0.05, Math.min(Math.min(full + 0.03, max), dragBase.current - deltaY / viewH())))
+  }, [full, max])
 
   const handleEnd = useCallback((deltaY: number, velocityPxPerS: number) => {
     moved.current = Math.abs(deltaY) > 6
@@ -326,6 +376,9 @@ export function MobileLayout({
 }: MobileLayoutProps) {
   const { t } = useI18n()
   const rootRef = useRef<HTMLDivElement>(null)
+  const topBarRef = useRef<HTMLDivElement>(null)
+  // Tallest the sheets may grow without hiding their handle under the top bar.
+  const sheetCeiling = useSheetCeiling(rootRef, topBarRef)
   const [sheetRatio, setSheetRatio]     = useState(SNAP_PEEK)
   // Transition is disabled while dragging so the sheet tracks the finger
   // instead of easing toward it.
@@ -398,10 +451,11 @@ export function MobileLayout({
 
   const onSheetMove = useCallback((deltaY: number) => {
     const vh = viewH()
-    // Dragging up (negative deltaY) raises the sheet.
-    const next = Math.max(SNAP_PEEK - 0.03, Math.min(SNAP_FULL + 0.03, dragBase.current - deltaY / vh))
+    // Dragging up (negative deltaY) raises the sheet, but never past the
+    // ceiling — the handle has to stay below the top bar to stay grabbable.
+    const next = Math.max(SNAP_PEEK - 0.03, Math.min(sheetCeiling, dragBase.current - deltaY / vh))
     setSheetRatio(next)
-  }, [])
+  }, [sheetCeiling])
 
   const onSheetEnd = useCallback((deltaY: number, velocityPxPerS: number) => {
     const vh = viewH()
@@ -409,8 +463,8 @@ export function MobileLayout({
     setSheetDragging(false)
     const ratioVel = -velocityPxPerS / vh // up = positive (expanding)
     const landed = dragBase.current - deltaY / vh
-    setSheetRatio(resolveSnap(landed, ratioVel))
-  }, [])
+    setSheetRatio(resolveSnap(landed, ratioVel, sheetCeiling))
+  }, [sheetCeiling])
 
   const beginSheetDrag = useVerticalDrag(onSheetMove, onSheetEnd)
   const startSheetDrag = useCallback((clientY: number) => {
@@ -430,11 +484,11 @@ export function MobileLayout({
     setSheetRatio(r => (r < SNAP_HALF ? SNAP_HALF : r))
   }, [])
 
-  // Typing needs the keyboard *and* the results visible: raise the sheet to
-  // full whenever any input inside it gains focus.
+  // Typing needs the keyboard *and* the results visible: raise the sheet as
+  // high as it goes whenever any input inside it gains focus.
   const onSheetFocus = useCallback((e: React.FocusEvent) => {
-    if ((e.target as HTMLElement).tagName === 'INPUT') setSheetRatio(SNAP_FULL)
-  }, [])
+    if ((e.target as HTMLElement).tagName === 'INPUT') setSheetRatio(sheetCeiling)
+  }, [sheetCeiling])
 
   // Frame journey fits above the sheet, which sits at half snap after a
   // journey is selected (uniform padding would hide the path behind it).
@@ -455,7 +509,7 @@ export function MobileLayout({
     <div ref={rootRef} style={{ position: 'fixed', inset: 0, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
 
       {/* ── Floating top bar ── */}
-      <div style={{
+      <div ref={topBarRef} style={{
         position: 'absolute', top: 0, left: 0, right: 0, zIndex: 35,
         display: 'flex', alignItems: 'center', gap: 8,
         padding: 'calc(env(safe-area-inset-top, 0px) + 12px) 12px 18px',
@@ -697,12 +751,12 @@ export function MobileLayout({
       </div>
 
       {/* ── Train detail ── */}
-      <DetailSheet open={selectedTrain !== null} onClose={onCloseTrain} full={0.86}>
+      <DetailSheet open={selectedTrain !== null} onClose={onCloseTrain} full={0.86} max={sheetCeiling}>
         <DetailPanel train={selectedTrain} lineColors={lineColors} onClose={onCloseTrain} mobile />
       </DetailSheet>
 
       {/* ── Stop detail ── */}
-      <DetailSheet open={selectedStop !== null && selectedTrain === null} onClose={onCloseStop} full={0.8}>
+      <DetailSheet open={selectedStop !== null && selectedTrain === null} onClose={onCloseStop} full={0.8} max={sheetCeiling}>
         <StopPanel stop={selectedStop} onClose={onCloseStop} lineColors={lineColors} mobile trains={filteredTrains} onSelectTrain={onSelectTrain} />
       </DetailSheet>
     </div>
